@@ -455,9 +455,7 @@ struct HistoryView: View {
 
 struct DictView: View {
     @ObservedObject var store = Store.shared
-    #if EXPERIMENTAL
     @ObservedObject var sug = Suggestions.shared
-    #endif
     @State private var filter = 0
     @State private var searching = false
     @State private var query = ""
@@ -524,9 +522,7 @@ struct DictView: View {
                 Picker("篩選", selection: $filter) {
                     Text("全部").tag(0); Text("自動加入").tag(1); Text("手動加入").tag(2)
                 }.pickerStyle(.segmented).labelsHidden().fixedSize()
-                #if EXPERIMENTAL
-                SuggestPill(on: filter == 3) { filter = filter == 3 ? 0 : 3 }   // 建議另外一顆，數字只出現在這裡
-                #endif
+                SuggestPill(on: filter == 3) { filter = filter == 3 ? 0 : 3 }   // 智慧建議另外一顆，數字只出現在這裡
                 Spacer()
                 if !picked.isEmpty {
                     Text("已勾選 \(picked.count) 個").foregroundStyle(.secondary)
@@ -542,16 +538,12 @@ struct DictView: View {
                     Image(systemName: searching ? "xmark" : "magnifyingglass").frame(width: 22, height: 22)
                 }.buttonStyle(.bordered).buttonBorderShape(.circle).controlSize(.large).help("搜尋")
             }
-            #if EXPERIMENTAL
             if filter == 3 {   // 建議自己一個分頁，不跟字典擠在一起
                 ScrollView {
                     SuggestBox()
                 }
                 .overlay { if sug.items.isEmpty && !sug.busy { Text("目前沒有建議").foregroundStyle(.secondary) } }
             } else { grid(shown) }
-            #else
-            grid(shown)
-            #endif
         }
         .padding(28)
         .alert(imported ?? "", isPresented: Binding(get: { imported != nil }, set: { if !$0 { imported = nil } })) { Button("好") {} }

@@ -150,7 +150,7 @@ struct MenuContent: View {
         }.disabled(!store.history.contains { !$0.text.isEmpty })
         if !store.lastLearned.isEmpty { Button("復原剛學的字") { store.undoLearned() } }   // 平常用不到，有學到字才出現
         Divider()
-        Button("打開") { show("首頁") }.keyboardShortcut(",")   // 設定、歷史紀錄、字典都在同一個視窗左邊切
+        Button("打開 Speakin") { show("首頁") }.keyboardShortcut(",")   // 設定、歷史紀錄、字典都在同一個視窗左邊切
         Picker("麥克風", selection: $store.settings.mic) {
             Text("跟系統設定").tag(String?.none)
             ForEach(SystemAudio.inputs, id: \.uid) { Text($0.name).tag(Optional($0.uid)) }
@@ -171,9 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         signal(SIGPIPE, SIG_IGN)   // claude 掛掉時寫入管線不要把整個 App 拖死
-        #if EXPERIMENTAL
         if CommandLine.arguments.count == 1 { Suggestions.shared.onLaunch() }   // 一般開 App 才檢查，測試用的參數不跑
-        #endif
         let args = CommandLine.arguments
         // 可以給好幾個 --file，照順序跑，用來測連續錄音
         let files = args.indices.filter { args[$0] == "--file" && $0 + 1 < args.count }.map { args[$0 + 1] }
@@ -345,11 +343,9 @@ enum SelfTest {
         check(TextFix.joinParts(["第一句。", "第二句。"]) == "第一句。第二句。"
               && TextFix.joinParts([String(repeating: "字", count: 150), "下一句。"]) == String(repeating: "字", count: 150) + "\n\n下一句。"
               && TextFix.joinParts(["我想問：", "1. A\n2. B", "好。"]) == "我想問：\n\n1. A\n2. B\n\n好。", "分塊接回去")
-        #if EXPERIMENTAL
         let h = [HistoryItem(app: "", raw: "我們打開新版的speaking看看", text: "", seconds: 1, latency: 0), HistoryItem(app: "", raw: "用 super base 存", text: "", seconds: 1, latency: 0)]
         let got = Suggest.attach([Suggest.Item(wrong: "Speakin", right: "speaking"), Suggest.Item(wrong: "super base", right: "Supabase")], h)
         check(got.map { $0.right } == ["Supabase"] && got.first?.hits.first?.text == "用 super base 存", "建議只認整個英文字")
-        #endif
         // 0x100000 = ⌘ 有按；0x10 = 右邊、0x08 = 左邊
         check(RecordKey.rightCommand.isDown(CGEventFlags(rawValue: 0x100010)) && !RecordKey.rightCommand.isDown(CGEventFlags(rawValue: 0x100008))
               && RecordKey.fn.isDown(.maskSecondaryFn) && !RecordKey.rightOption.isDown(CGEventFlags(rawValue: 0x80020)), "錄音鍵分得出左右")
