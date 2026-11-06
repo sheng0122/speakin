@@ -25,7 +25,7 @@ private let tools = "/opt/homebrew/bin"   // App 從 Finder 開沒有 PATH，直
         idle?.cancel()
         let w = DispatchWorkItem { [weak self] in self?.stop() }
         idle = w
-        DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: w)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: w)   // 閒置 1 分鐘就放掉模型（約 220 MB）；2026-11-06 實測閒置後第一句只慢 0.1～0.25 秒，錄音一開始就會重新載入
     }
 
     func transcribe(_ samples: [Float], prompt: String) async throws -> String {
@@ -284,7 +284,7 @@ enum Agent: String, CaseIterable {
         idle?.cancel()
         let w = DispatchWorkItem { [weak self] in self?.kill() }
         idle = w
-        DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: w)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: w)   // 同上，常駐的 claude 約 190 MB
     }
 
     private func ask(_ content: String, timeout: Double) async -> String? {
