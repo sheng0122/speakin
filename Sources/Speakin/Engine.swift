@@ -262,7 +262,9 @@ import AVFoundation
         defer { helpers.forEach { $0.kill() }; helpers = [] }
         guard runSettings.polish, !fixed.isEmpty else { return (raw, TextFix.space(fixed)) }
         // 不到 10 個字跳過潤稿：251 筆紀錄裡這種長度 93% 只改了標點，卻要多等約 1 秒
-        if fixed.filter({ $0.isLetter || $0.isNumber }).count < 10 { log.line("短句，不潤稿"); return (raw, TextFix.question(TextFix.space(fixed))) }
+        // 口述的 email（「a at b 點 tw」）就算很短也要潤稿，才會寫回 a@b.tw
+        let spokenEmail = fixed.range(of: "(?i)(\\bat\\b|小老鼠)", options: .regularExpression) != nil
+        if !spokenEmail, fixed.filter({ $0.isLetter || $0.isNumber }).count < 10 { log.line("短句，不潤稿"); return (raw, TextFix.question(TextFix.space(fixed))) }
         let parts = runSettings.model == "qwen" ? [fixed] : TextFix.chunks(fixed)
         totalParts = parts.count
         let workers = [polisher] + helpers
