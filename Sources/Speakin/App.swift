@@ -345,6 +345,11 @@ enum SelfTest {
         check(TextFix.joinParts(["第一句。", "第二句。"]) == "第一句。第二句。"
               && TextFix.joinParts([String(repeating: "字", count: 150), "下一句。"]) == String(repeating: "字", count: 150) + "\n\n下一句。"
               && TextFix.joinParts(["我想問：", "1. A\n2. B", "好。"]) == "我想問：\n\n1. A\n2. B\n\n好。", "分塊接回去")
+        #if EXPERIMENTAL
+        let h = [HistoryItem(app: "", raw: "我們打開新版的speaking看看", text: "", seconds: 1, latency: 0), HistoryItem(app: "", raw: "用 super base 存", text: "", seconds: 1, latency: 0)]
+        let got = Suggest.attach([Suggest.Item(wrong: "Speakin", right: "speaking"), Suggest.Item(wrong: "super base", right: "Supabase")], h)
+        check(got.map { $0.right } == ["Supabase"] && got.first?.hits.first?.text == "用 super base 存", "建議只認整個英文字")
+        #endif
         // 0x100000 = ⌘ 有按；0x10 = 右邊、0x08 = 左邊
         check(RecordKey.rightCommand.isDown(CGEventFlags(rawValue: 0x100010)) && !RecordKey.rightCommand.isDown(CGEventFlags(rawValue: 0x100008))
               && RecordKey.fn.isDown(.maskSecondaryFn) && !RecordKey.rightOption.isDown(CGEventFlags(rawValue: 0x80020)), "錄音鍵分得出左右")
