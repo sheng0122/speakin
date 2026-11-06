@@ -138,9 +138,10 @@ struct MenuContent: View {
             Divider()
         }
         // 選單關掉、焦點回到原本的 App 之後才貼
-        Button("再貼一次上一句（⌥⇧V）") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { u.pasteLast() } }
+        Button("再貼一次") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { u.pasteLast() } }
+            .keyboardShortcut("v", modifiers: [.option, .shift])   // 只是讓選單右邊顯示 ⌥⇧V；真正的全域快捷鍵在 Hotkey
             .disabled(u.lastText.isEmpty)
-        Menu("複製最近講的") {
+        Menu("最近講的") {
             ForEach(store.history.filter { !$0.text.isEmpty }.suffix(5).reversed()) { h in
                 Button(String(h.text.prefix(30)) + (h.text.count > 30 ? "…" : "")) {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString(h.text, forType: .string)
@@ -149,8 +150,7 @@ struct MenuContent: View {
         }.disabled(!store.history.contains { !$0.text.isEmpty })
         if !store.lastLearned.isEmpty { Button("復原剛學的字") { store.undoLearned() } }   // 平常用不到，有學到字才出現
         Divider()
-        Button("打開 Speakin") { show("首頁") }   // 歷史紀錄、字典在視窗左邊切
-        Button("設定…") { show("設定") }.keyboardShortcut(",")
+        Button("打開") { show("首頁") }.keyboardShortcut(",")   // 設定、歷史紀錄、字典都在同一個視窗左邊切
         Picker("麥克風", selection: $store.settings.mic) {
             Text("跟系統設定").tag(String?.none)
             ForEach(SystemAudio.inputs, id: \.uid) { Text($0.name).tag(Optional($0.uid)) }
@@ -159,7 +159,7 @@ struct MenuContent: View {
         if let n = u.update, let app = u.staged { Button("重開完成更新 \(n.version)") { Updater.install(app) } }
         else if let n = u.update { Button("有新版 \(n.version)，下載") { NSWorkspace.shared.open(n.url) } }
         if Updater.url != nil { Button("檢查更新") { Task { await u.checkUpdate(manual: true) } } }
-        Button("結束 Speakin") { NSApp.terminate(nil) }.keyboardShortcut("q")
+        Button("結束") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
 }
 
