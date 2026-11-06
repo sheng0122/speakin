@@ -17,5 +17,5 @@ xcrun stapler staple dist/Speakin.dmg
 spctl -a -vv -t open --context context:primary-signature dist/Speakin.dmg
 V=$(cat VERSION)
 printf '{"version":"%s","url":"https://github.com/%s/releases/download/v%s/Speakin.dmg"}\n' "$V" "$REPO" "$V" > dist/latest.json
-echo "完成：$(pwd)/dist/Speakin.dmg（版本 $V）"
+echo "完成：$(pwd)/dist/Speakin.dmg（版本 ${V}）"
 echo "發佈：GH_TOKEN=\$(gh auth token -u sheng0122) gh release create v$V dist/Speakin.dmg dist/latest.json -R $REPO -t \"Speakin $V\""
