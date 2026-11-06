@@ -461,6 +461,9 @@ struct HistoryView: View {
 
 struct DictView: View {
     @ObservedObject var store = Store.shared
+    #if EXPERIMENTAL
+    @ObservedObject var sug = Suggestions.shared
+    #endif
     @State private var filter = 0
     @State private var searching = false
     @State private var query = ""
@@ -499,6 +502,15 @@ struct DictView: View {
         .onTapGesture { if picked.isEmpty { edit(e) } else if picked.contains(e.id) { picked.remove(e.id) } else { picked.insert(e.id) } }
     }
 
+    private func grid(_ shown: [DictEntry]) -> some View {
+        ScrollView {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
+                ForEach(shown) { e in chip(e) }
+            }
+        }
+        .overlay { if shown.isEmpty { Text(query.isEmpty ? "還沒有詞" : "找不到").foregroundStyle(.secondary) } }
+    }
+
     private func edit(_ e: DictEntry) { editing = e; editTerm = e.term; editHeard = e.heardAs.joined(separator: "、") }
 
     var body: some View {
@@ -510,9 +522,6 @@ struct DictView: View {
             HStack {
                 Text("字典").font(.system(size: 30, weight: .heavy))
                 Spacer()
-                #if EXPERIMENTAL
-                SuggestCheckButton()
-                #endif
                 Button("匯入…") { importWords() }.controlSize(.large).buttonBorderShape(.capsule)
                     .help("從 .txt 或 .csv 匯入，一行一個詞（Typeless 匯出的字典也可以）")
                 Button("新增詞彙") { adding = true }.buttonStyle(.borderedProminent).controlSize(.large).buttonBorderShape(.capsule)
@@ -520,6 +529,9 @@ struct DictView: View {
             HStack(spacing: 10) {
                 Picker("篩選", selection: $filter) {
                     Text("全部").tag(0); Text("自動加入").tag(1); Text("手動加入").tag(2)
+                    #if EXPERIMENTAL
+                    Text(sug.items.isEmpty ? "建議" : "建議 \(sug.items.count)").tag(3)
+                    #endif
                 }.pickerStyle(.segmented).labelsHidden().fixedSize()
                 Spacer()
                 if !picked.isEmpty {
@@ -537,17 +549,25 @@ struct DictView: View {
                 }.buttonStyle(.bordered).buttonBorderShape(.circle).controlSize(.large).help("搜尋")
             }
             #if EXPERIMENTAL
-            SuggestBox()
-            #endif
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                    ForEach(shown) { e in chip(e) }
+            if filter == 3 {   // 建議自己一個分頁，不跟字典擠在一起
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("每 7 天會自動從你最近講的話找一次。").foregroundStyle(.secondary)
+                            Spacer()
+                            SuggestCheckButton()
+                        }
+                        SuggestBox()
+                    }
                 }
-            }
-            .overlay { if shown.isEmpty { Text(query.isEmpty ? "還沒有詞" : "找不到").foregroundStyle(.secondary) } }
-            .alert(imported ?? "", isPresented: Binding(get: { imported != nil }, set: { if !$0 { imported = nil } })) { Button("好") {} }
+                .overlay { if sug.items.isEmpty && !sug.busy { Text("目前沒有建議").foregroundStyle(.secondary) } }
+            } else { grid(shown) }
+            #else
+            grid(shown)
+            #endif
         }
         .padding(28)
+        .alert(imported ?? "", isPresented: Binding(get: { imported != nil }, set: { if !$0 { imported = nil } })) { Button("好") {} }
         .sheet(item: $editing) { e in
             VStack(alignment: .leading, spacing: 14) {
                 Text("修改詞彙").font(.title3.bold())
