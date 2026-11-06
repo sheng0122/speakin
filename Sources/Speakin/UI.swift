@@ -657,6 +657,11 @@ struct SettingsView: View {
                 }
                 .onChange(of: store.settings.fnMode) { _, v in Speakin.shared.hotkey.mode = v }
                 Text("⌥⇧V：再貼一次上一句。").font(.caption).foregroundStyle(.secondary)
+                Toggle("不在 Dock 顯示", isOn: $store.settings.hideDock)
+                    .onChange(of: store.settings.hideDock) { _, v in
+                        NSApp.setActivationPolicy(v ? .accessory : .regular)
+                        NSApp.activate(ignoringOtherApps: true)   // 切換後視窗會被丟到後面，拉回來
+                    }
                 Toggle("提示音", isOn: $store.settings.sounds)
                     .help("開始錄音時響一聲")
                 Picker("麥克風", selection: $store.settings.mic) {

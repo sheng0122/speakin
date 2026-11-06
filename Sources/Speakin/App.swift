@@ -168,6 +168,7 @@ struct MenuContent: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         signal(SIGPIPE, SIG_IGN)   // claude 掛掉時寫入管線不要把整個 App 拖死
+        if Store.shared.settings.hideDock { NSApp.setActivationPolicy(.accessory) }
         let args = CommandLine.arguments
         // 可以給好幾個 --file，照順序跑，用來測連續錄音
         let files = args.indices.filter { args[$0] == "--file" && $0 + 1 < args.count }.map { args[$0 + 1] }
@@ -228,9 +229,9 @@ enum SelfTest {
             check(Updater.isNewer("0.10", than: "0.9") && !Updater.isNewer("0.2", than: "0.2") && Updater.isNewer("1.0", than: "0.9.9"), "版本號比大小")
             func mode(_ j: String) -> FnMode? { try? JSONDecoder().decode(Settings.self, from: Data(j.utf8)).fnMode }
             check(mode("{\"fnHold\":true}") == .hold && mode("{\"fnHold\":false}") == .tap && mode("{}") == .both, "舊設定的 Fn 習慣照舊，新裝的預設兩種都可以")
-            var st = Settings(); st.historyDays = 0; st.fnMode = .hold; st.autoEnter = true
+            var st = Settings(); st.historyDays = 0; st.fnMode = .hold; st.autoEnter = true; st.hideDock = true
             let back = try? JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(st))
-            check(back?.historyDays == 0 && back?.fnMode == .hold && back?.autoEnter == true, "新設定存檔再讀回來不變")
+            check(back?.historyDays == 0 && back?.fnMode == .hold && back?.autoEnter == true && back?.hideDock == true, "新設定存檔再讀回來不變")
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("speakin-prune-\(UUID())")
             for n in ["2020-01-01_000000", "2999-01-01_000000", "not-a-date"] { try? FileManager.default.createDirectory(at: root.appendingPathComponent(n), withIntermediateDirectories: true) }
             SessionLog.prune(olderThan: Date(), in: root)

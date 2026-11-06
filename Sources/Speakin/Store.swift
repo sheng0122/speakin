@@ -40,7 +40,7 @@ struct HistoryItem: Codable, Identifiable, Equatable, Rowable {
 enum FnMode: String, Codable { case tap, hold, both }
 
 struct Settings: Codable, Equatable {
-    private enum CodingKeys: String, CodingKey { case polish, model, asrModel, context, keepClipboard, sounds, muteOthers, mic, fnMode, fnHold, historyDays, micAlwaysOn, avoidBluetooth, onboarded, smooth, autoEnter }
+    private enum CodingKeys: String, CodingKey { case polish, model, asrModel, context, keepClipboard, sounds, muteOthers, mic, fnMode, fnHold, historyDays, micAlwaysOn, avoidBluetooth, onboarded, smooth, autoEnter, hideDock }
     var polish = true
     var model = "auto"
     var asrModel = Store.dir.appendingPathComponent("models/TEA-ASR-1.1-Q6_K.gguf").path
@@ -55,6 +55,7 @@ struct Settings: Codable, Equatable {
     var onboarded = false   // 走完第一次的引導
     var avoidBluetooth = true   // 系統預設是藍牙耳機時改用內建麥克風（AirPods 才不會切成通話音質）
     var autoEnter = false   // 貼上後自動按 Enter 送出
+    var hideDock = false    // 不在 Dock 顯示，只留選單列圖示
     var smooth = false   // 潤稿模式：false = 忠於原話，true = 理順句子（比較像 Typeless）
 
     init() {}
@@ -65,7 +66,7 @@ struct Settings: Codable, Equatable {
         try c.encode(muteOthers, forKey: .muteOthers); try c.encodeIfPresent(mic, forKey: .mic); try c.encode(fnMode, forKey: .fnMode)
         try c.encodeIfPresent(historyDays, forKey: .historyDays); try c.encode(micAlwaysOn, forKey: .micAlwaysOn)
         try c.encode(avoidBluetooth, forKey: .avoidBluetooth); try c.encode(onboarded, forKey: .onboarded); try c.encode(smooth, forKey: .smooth)
-        try c.encode(autoEnter, forKey: .autoEnter)
+        try c.encode(autoEnter, forKey: .autoEnter); try c.encode(hideDock, forKey: .hideDock)
     }
     /// 舊的 settings.json 少了新欄位時用預設值，不要整份設定作廢
     init(from d: Decoder) throws {
@@ -80,6 +81,7 @@ struct Settings: Codable, Equatable {
         mic = try c.decodeIfPresent(String.self, forKey: .mic)
         smooth = try c.decodeIfPresent(Bool.self, forKey: .smooth) ?? x.smooth
         autoEnter = try c.decodeIfPresent(Bool.self, forKey: .autoEnter) ?? x.autoEnter
+        hideDock = try c.decodeIfPresent(Bool.self, forKey: .hideDock) ?? x.hideDock
         // 舊設定只有 fnHold：照原本的習慣，不偷換
         fnMode = try c.decodeIfPresent(FnMode.self, forKey: .fnMode) ?? (try c.decodeIfPresent(Bool.self, forKey: .fnHold)).map { $0 ? .hold : .tap } ?? x.fnMode
         historyDays = try c.decodeIfPresent(Int.self, forKey: .historyDays)
