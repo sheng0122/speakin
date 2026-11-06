@@ -336,6 +336,9 @@ enum SelfTest {
               && !parts.contains { $0.hasPrefix("loudflare") || $0.hasSuffix("C") }
               && TextFix.chunks(String(repeating: "我們要討論電子報的寄送時程，", count: 30)).allSatisfy { $0.hasPrefix("我們") }, "長文分塊不掉字")
         check(TextFix.chunks(String(repeating: "我們要討論電子報的寄送時程，剛剛那句不要，", count: 12)).allSatisfy { !$0.hasPrefix("剛剛") }, "不在改口前面切塊")
+        check(TextFix.joinParts(["第一句。", "第二句。"]) == "第一句。第二句。"
+              && TextFix.joinParts([String(repeating: "字", count: 150), "下一句。"]) == String(repeating: "字", count: 150) + "\n\n下一句。"
+              && TextFix.joinParts(["我想問：", "1. A\n2. B", "好。"]) == "我想問：\n\n1. A\n2. B\n\n好。", "分塊接回去")
         check(TextFix.applyDict("用 cloudflare 跟 cloud code", [DictEntry(term: "claude", heardAs: ["Cloudflare"]), DictEntry(term: "Cloudflare", heardAs: []), DictEntry(term: "Claude Code", heardAs: ["cloud code"])])
               == "用 Cloudflare 跟 Claude Code"
               && !Store.polishTerms([DictEntry(term: "claude", heardAs: ["Cloudflare"]), DictEntry(term: "Cloudflare", heardAs: [])], for: "cloudflare").contains("常被聽成"), "常被聽成是另一個字典詞時不換")

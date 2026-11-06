@@ -18,7 +18,7 @@ import AVFoundation
     let store = Store.shared
     let asr = ASR()
     let polisher = Polisher()
-    private var helpers: [Polisher] = []   // 錄音超過 40 秒才開，長文分塊同時潤稿，用完就關
+    private var helpers: [Polisher] = []   // 錄音超過 20 秒（約 100 字，會分塊）才開，長文分塊同時潤稿，用完就關
     let local = LocalPolisher()
     private let rec = Recorder()
     let hotkey = Hotkey()
@@ -225,9 +225,9 @@ import AVFoundation
         pieces.append(raw)
     }
 
-    /// 錄音過 40 秒，長文很可能要分塊，先多暖機 2 個 claude（暖機要幾秒，等按結束才開會來不及）
+    /// 錄音過 20 秒，長文很可能要分塊，先多暖機 2 個 claude（暖機要幾秒，等按結束才開會來不及）
     private func startHelpers() {
-        guard helpers.isEmpty, runSettings.polish, runSettings.model != "qwen", Date().timeIntervalSince(started) > 40 else { return }
+        guard helpers.isEmpty, runSettings.polish, runSettings.model != "qwen", Date().timeIntervalSince(started) > 20 else { return }
         helpers = (0..<2).map { _ in let p = Polisher(); p.smooth = runSettings.smooth; p.prepare(model: runSettings.model, fresh: true); return p }
     }
 
@@ -278,7 +278,7 @@ import AVFoundation
             }
             return await g.reduce(into: [Int: String]()) { acc, r in for (i, t) in r { acc[i] = t } }
         }
-        return (raw, TextFix.space(parts.indices.map { done[$0] ?? parts[$0] }.joined(separator: "\n\n")))
+        return (raw, TextFix.space(TextFix.joinParts(parts.indices.map { done[$0] ?? parts[$0] })))
     }
 
     /// 潤一塊；沒回應或不可信就用這塊的原文，不拖累其他塊

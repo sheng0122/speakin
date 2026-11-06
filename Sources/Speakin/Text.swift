@@ -137,9 +137,10 @@ enum TextFix {
     }
 
     /// 長文切成幾塊分開潤稿：一次潤太長，Haiku 會刪句、改寫成重點，甚至開始回答內容。
-    /// 超過 300 字才切；湊到 80 字後，在「然後、所以、但是」這類轉折詞或句號前切，一塊最多 150 字。
+    /// 超過 100 字就切；湊到 50 字後，在「然後、所以、但是」這類轉折詞或句號前切，一塊最多 100 字。
+    /// 2026-11-06 用 402 筆紀錄重測：超過 100 字的，整段送只有 6/25 整理好，切成 50～100 字有 23/25。
     static let turn = try! NSRegularExpression(pattern: "(?<=[^，。、 ])(?=然後|那我|那你|那如果|所以|但是|另外|因為|如果|接下來)|(?<=[。？！])")
-    static func chunks(_ text: String, min: Int = 80, max: Int = 150, long: Int = 300) -> [String] {
+    static func chunks(_ text: String, min: Int = 50, max: Int = 100, long: Int = 100) -> [String] {
         let s = Array(text)
         guard s.count > long else { return [text] }
         let ns = text as NSString
@@ -157,6 +158,18 @@ enum TextFix {
         }
         out.append(String(s[start...]))
         return out.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    /// 分塊潤完接回去：每塊各自成段會在句子中間斷行，所以湊滿 150 字才換段；塊裡本來的分段、清單照留
+    static func joinParts(_ parts: [String]) -> String {
+        var out = "", prev = ""
+        for p in parts {
+            let lastPara = out.components(separatedBy: "\n").last ?? ""
+            let newPara = !out.isEmpty && (lastPara.count >= 150 || p.contains("\n") || prev.contains("\n"))
+            out += (newPara ? "\n\n" : "") + p
+            prev = p
+        }
+        return out
     }
 
     /// 中文和英文、數字之間補一個空白（「用Claude寫3段」→「用 Claude 寫 3 段」）。模型常漏，用程式補才穩。
