@@ -169,6 +169,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         signal(SIGPIPE, SIG_IGN)   // claude 掛掉時寫入管線不要把整個 App 拖死
         if Store.shared.settings.hideDock { NSApp.setActivationPolicy(.accessory) }
+        #if EXPERIMENTAL
+        if CommandLine.arguments.count == 1 { Suggest.onLaunch() }   // 一般開 App 才檢查，測試用的參數不跑
+        #endif
         let args = CommandLine.arguments
         // 可以給好幾個 --file，照順序跑，用來測連續錄音
         let files = args.indices.filter { args[$0] == "--file" && $0 + 1 < args.count }.map { args[$0 + 1] }
