@@ -30,8 +30,8 @@ struct SpeakinApp: App {
                     .map { Suggest.Item(wrong: $0.0, right: $0.1, example: $0.2) }
                 let w = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
                 w.titlebarAppearsTransparent = true; w.title = ""
-                w.contentViewController = NSHostingController(rootView: SuggestPopup(items: fake) { exit(0) })
-                w.center(); w.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true); app.run()
+                let hc = NSHostingController(rootView: SuggestPopup(items: fake) { exit(0) })
+                w.contentViewController = hc; Suggest.place(w, hc.view.fittingSize); w.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true); app.run()
             }
             exit(0)
         }
@@ -146,7 +146,8 @@ struct MenuContent: View {
     @ObservedObject var store = Store.shared
     private func show(_ tab: String) { u.tab = tab; openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
     var body: some View {
-        Text(u.hotkeyReady ? (store.settings.fnMode == .hold ? "按住 Fn 說話" : "按一下 Fn 開始說話") : "等待輔助使用權限…")
+        let k = store.settings.recordKey.name
+        Text(u.hotkeyReady ? (store.settings.fnMode == .hold ? "按住 \(k) 說話" : "按一下 \(k) 開始說話") : "等待輔助使用權限…")
         if u.state == .recording {
             TimelineView(.periodic(from: .now, by: 1)) { c in
                 let t = Int(c.date.timeIntervalSince(u.started)); Text(String(format: "錄音中 %d:%02d", t / 60, t % 60))
@@ -154,20 +155,18 @@ struct MenuContent: View {
         }
         Divider()
         // 選單關掉、焦點回到原本的 App 之後才貼
-        Button("貼上上一次的結果（⌥⇧V）") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { u.pasteLast() } }
+        Button("再貼一次上一句（⌥⇧V）") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { u.pasteLast() } }
             .disabled(u.lastText.isEmpty)
-        Menu("最近 5 筆（點一下複製）") {
+        Menu("複製最近講的") {
             ForEach(store.history.filter { !$0.text.isEmpty }.suffix(5).reversed()) { h in
                 Button(String(h.text.prefix(30)) + (h.text.count > 30 ? "…" : "")) {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString(h.text, forType: .string)
                 }
             }
         }.disabled(!store.history.contains { !$0.text.isEmpty })
-        Button("復原剛學的字") { store.undoLearned() }.disabled(store.lastLearned.isEmpty)
+        if !store.lastLearned.isEmpty { Button("復原剛學的字") { store.undoLearned() } }   // 平常用不到，有學到字才出現
         Divider()
-        Button("首頁") { show("首頁") }
-        Button("歷史紀錄") { show("歷史紀錄") }
-        Button("字典") { show("字典") }
+        Button("打開 Speakin") { show("首頁") }   // 歷史紀錄、字典在視窗左邊切
         Button("設定…") { show("設定") }.keyboardShortcut(",")
         Picker("麥克風", selection: $store.settings.mic) {
             Text("跟系統設定").tag(String?.none)
@@ -177,7 +176,6 @@ struct MenuContent: View {
         if let n = u.update, let app = u.staged { Button("重開完成更新 \(n.version)") { Updater.install(app) } }
         else if let n = u.update { Button("有新版 \(n.version)，下載") { NSWorkspace.shared.open(n.url) } }
         if Updater.url != nil { Button("檢查更新") { Task { await u.checkUpdate(manual: true) } } }
-        Text("版本 \(Updater.current)")
         Button("結束 Speakin") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
 }
