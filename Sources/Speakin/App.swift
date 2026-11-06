@@ -141,7 +141,7 @@ struct MenuContent: View {
         Button("再貼一次") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { u.pasteLast() } }
             .keyboardShortcut("v", modifiers: [.option, .shift])   // 只是讓選單右邊顯示 ⌥⇧V；真正的全域快捷鍵在 Hotkey
             .disabled(u.lastText.isEmpty)
-        Menu("最近講的") {
+        Menu("歷史紀錄") {
             ForEach(store.history.filter { !$0.text.isEmpty }.suffix(5).reversed()) { h in
                 Button(String(h.text.prefix(30)) + (h.text.count > 30 ? "…" : "")) {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString(h.text, forType: .string)
