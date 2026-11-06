@@ -545,14 +545,7 @@ struct DictView: View {
             #if EXPERIMENTAL
             if filter == 3 {   // 建議自己一個分頁，不跟字典擠在一起
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("每 7 天會自動從你最近講的話找一次。").foregroundStyle(.secondary)
-                            Spacer()
-                            SuggestCheckButton()
-                        }
-                        SuggestBox()
-                    }
+                    SuggestBox()
                 }
                 .overlay { if sug.items.isEmpty && !sug.busy { Text("目前沒有建議").foregroundStyle(.secondary) } }
             } else { grid(shown) }
