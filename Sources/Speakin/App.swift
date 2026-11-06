@@ -19,23 +19,6 @@ struct SpeakinApp: App {
             }
             exit(0)
         }
-        // 預覽開 App 跳出的字典建議（假資料）：Speakin --preview-suggest
-        #if EXPERIMENTAL
-        if CommandLine.arguments.contains("--preview-suggest") {
-            MainActor.assumeIsolated {
-                let app = NSApplication.shared; app.setActivationPolicy(.regular)
-                let fake = [("cloud", "Claude", "錄音超過二十秒會多開兩個 cloud 程式"), ("論文", "潤稿", "潤稿被聽成論文這種比較常見的錯字"),
-                            ("remi", "README", "我覺得你的 remi 寫的也很差呢"), ("mc", "MCP", "你再重新回來看一下我們的這個 mc 這個工具"),
-                            ("type less", "Typeless", "跟 type less 比起來我們快多少"), ("瑞克", "Rust", "改成瑞克記憶體會更小嗎"), ("黑酷", "Haiku", "裡面大約是黑酷本身在想")]
-                    .map { Suggest.Item(wrong: $0.0, right: $0.1, example: $0.2) }
-                let w = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
-                w.titlebarAppearsTransparent = true; w.title = ""
-                let hc = NSHostingController(rootView: SuggestPopup(items: fake) { exit(0) })
-                w.contentViewController = hc; Suggest.place(w, hc.view.fittingSize); w.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true); app.run()
-            }
-            exit(0)
-        }
-        #endif
         // 預覽主視窗＋錄音膠囊（假音量，不錄音、不動設定）：Speakin --preview-main
         if CommandLine.arguments.contains("--preview-main") {
             MainActor.assumeIsolated {
@@ -189,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         signal(SIGPIPE, SIG_IGN)   // claude 掛掉時寫入管線不要把整個 App 拖死
         #if EXPERIMENTAL
-        if CommandLine.arguments.count == 1 { Suggest.onLaunch() }   // 一般開 App 才檢查，測試用的參數不跑
+        if CommandLine.arguments.count == 1 { Suggestions.shared.onLaunch() }   // 一般開 App 才檢查，測試用的參數不跑
         #endif
         let args = CommandLine.arguments
         // 可以給好幾個 --file，照順序跑，用來測連續錄音

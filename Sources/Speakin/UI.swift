@@ -86,9 +86,6 @@ struct MainView: View {
     @ObservedObject var store = Store.shared
     private var tabs: [(String, String)] {
         var t = [("首頁", "house"), ("歷史紀錄", "clock"), ("字典", "character.book.closed"), ("設定", "gearshape")]
-        #if EXPERIMENTAL
-        t.append(("實驗功能", "flask"))
-        #endif
         return t
     }
 
@@ -107,7 +104,13 @@ struct MainView: View {
                 ForEach(tabs, id: \.0) { t in
                     let on = u.tab == t.0
                     Button { u.tab = t.0 } label: {
-                        Label(t.0, systemImage: t.1).frame(maxWidth: .infinity, alignment: .leading)
+                        HStack {
+                            Label(t.0, systemImage: t.1)
+                            Spacer()
+                            #if EXPERIMENTAL
+                            if t.0 == "字典" { SuggestCount(on: on) }
+                            #endif
+                        }.frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 10).padding(.vertical, 7)
                             .background(RoundedRectangle(cornerRadius: 8).fill(on ? brand : .clear))
                             .foregroundStyle(on ? .white : .primary).contentShape(Rectangle())
@@ -134,9 +137,6 @@ struct MainView: View {
             case "歷史紀錄": HistoryView()
             case "字典": DictView()
             case "設定": SettingsView()
-            #if EXPERIMENTAL
-            case "實驗功能": ExperimentalView()
-            #endif
             default: HomeView()
             } }.scrollContentBackground(.hidden).frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(white: 0.07))
         }
@@ -510,6 +510,9 @@ struct DictView: View {
             HStack {
                 Text("字典").font(.system(size: 30, weight: .heavy))
                 Spacer()
+                #if EXPERIMENTAL
+                SuggestCheckButton()
+                #endif
                 Button("匯入…") { importWords() }.controlSize(.large).buttonBorderShape(.capsule)
                     .help("從 .txt 或 .csv 匯入，一行一個詞（Typeless 匯出的字典也可以）")
                 Button("新增詞彙") { adding = true }.buttonStyle(.borderedProminent).controlSize(.large).buttonBorderShape(.capsule)
@@ -533,6 +536,9 @@ struct DictView: View {
                     Image(systemName: searching ? "xmark" : "magnifyingglass").frame(width: 22, height: 22)
                 }.buttonStyle(.bordered).buttonBorderShape(.circle).controlSize(.large).help("搜尋")
             }
+            #if EXPERIMENTAL
+            SuggestBox()
+            #endif
             ScrollView {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                     ForEach(shown) { e in chip(e) }
