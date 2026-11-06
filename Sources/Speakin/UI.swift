@@ -84,7 +84,13 @@ struct Spinner: View {
 struct MainView: View {
     @ObservedObject var u = Speakin.shared
     @ObservedObject var store = Store.shared
-    private let tabs = [("首頁", "house"), ("歷史紀錄", "clock"), ("字典", "character.book.closed"), ("設定", "gearshape")]
+    private var tabs: [(String, String)] {
+        var t = [("首頁", "house"), ("歷史紀錄", "clock"), ("字典", "character.book.closed"), ("設定", "gearshape")]
+        #if EXPERIMENTAL
+        t.append(("實驗功能", "flask"))
+        #endif
+        return t
+    }
 
     var body: some View {
         if !store.settings.onboarded {
@@ -128,6 +134,9 @@ struct MainView: View {
             case "歷史紀錄": HistoryView()
             case "字典": DictView()
             case "設定": SettingsView()
+            #if EXPERIMENTAL
+            case "實驗功能": ExperimentalView()
+            #endif
             default: HomeView()
             } }.scrollContentBackground(.hidden).frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(white: 0.07))
         }

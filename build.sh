@@ -2,7 +2,8 @@
 # 編譯並打包成 Speakin.app：./build.sh
 set -euo pipefail
 cd "$(dirname "$0")"
-swift build -c release
+# 開發版多編「實驗功能」（Experimental.swift，不放上 GitHub）；正式版不會有
+if [ "${SIGN:-Apple Development}" = "Apple Development" ]; then swift build -c release -Xswiftc -DEXPERIMENTAL; else swift build -c release; fi
 APP="${APP:-Speakin.app}"   # 同事版另外放 dist/，不蓋掉自己用的（換簽章會讓系統權限掉）
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
