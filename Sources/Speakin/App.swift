@@ -146,14 +146,14 @@ struct MenuContent: View {
     @ObservedObject var store = Store.shared
     private func show(_ tab: String) { u.tab = tab; openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
     var body: some View {
-        let k = store.settings.recordKey.name
-        Text(u.hotkeyReady ? (store.settings.fnMode == .hold ? "按住 \(k) 說話" : "按一下 \(k) 開始說話") : "等待輔助使用權限…")
+        // 平常不放提示（按法在設定頁寫了）；只在有狀況或錄音中才多一行
+        if !u.hotkeyReady { Text("等待輔助使用權限…"); Divider() }
         if u.state == .recording {
             TimelineView(.periodic(from: .now, by: 1)) { c in
                 let t = Int(c.date.timeIntervalSince(u.started)); Text(String(format: "錄音中 %d:%02d", t / 60, t % 60))
             }
+            Divider()
         }
-        Divider()
         // 選單關掉、焦點回到原本的 App 之後才貼
         Button("再貼一次上一句（⌥⇧V）") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { u.pasteLast() } }
             .disabled(u.lastText.isEmpty)
