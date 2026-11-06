@@ -329,7 +329,7 @@ struct HistoryView: View {
                 // 搜尋框放在標題下面，不放視窗最上面
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("搜尋內容或 App", text: $query).textFieldStyle(.plain)
+                    TextField("搜尋", text: $query).textFieldStyle(.plain)
                     if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary) }
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
