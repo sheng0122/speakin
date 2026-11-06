@@ -193,6 +193,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        if let i = args.firstIndex(of: "--suggest"), i + 1 < args.count {   // 測智慧建議：Speakin --suggest sonnet｜codex｜agy｜qwen，用真的紀錄跑一次
+            Task { @MainActor in
+                let t = Date()
+                let r = await Suggest.find(Store.shared.history, dict: Store.shared.dict, model: args[i + 1])
+                print(String(format: "%.0f 秒", Date().timeIntervalSince(t)), r == nil ? "失敗" : "找到 \(r!.count) 個")
+                for x in Suggest.attach(r ?? [], Store.shared.history) { print("  \(x.wrong) → \(x.right)（\(x.hits.count) 句）") }
+                Speakin.shared.local.stop(); exit(0)
+            }
+            return
+        }
         if args.contains("--download-local") {   // 用 App 的下載功能抓本機潤稿模型
             Task { @MainActor in
                 // 測進度條：Speakin --download-local test 抓 50 MB 測試檔（大小不對會報下載不完整，正常）

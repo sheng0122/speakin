@@ -229,11 +229,12 @@ enum Agent: String, CaseIterable {
         case .agy:
             // agy 沒有系統提示的參數，規則要放成工作區裡的 agent 檔
             let ws = Store.dir.appendingPathComponent("agents/agy-ws")
-            let file = ws.appendingPathComponent(".agents/agents/polish.md")
+            let name = ruleOverride == nil ? "polish" : "task"   // 智慧建議用另一個檔，不蓋掉潤稿的
+            let file = ws.appendingPathComponent(".agents/agents/\(name).md")
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? ("---\nname: polish\ndescription: 語音逐字稿潤稿器\n---\n" + r).write(to: file, atomically: true, encoding: .utf8)
+            try? ("---\nname: \(name)\ndescription: 語音逐字稿潤稿器\n---\n" + r).write(to: file, atomically: true, encoding: .utf8)
             p.currentDirectoryURL = ws
-            p.arguments = ["-p=", "--agent", "polish", "--model", a.model, "--settings", #"{"toolPermission":"strict"}"#,
+            p.arguments = ["-p=", "--agent", name, "--model", a.model, "--settings", #"{"toolPermission":"strict"}"#,
                            "--sandbox", "--disable-slash-commands", "--input-format", "stream-json", "--output-format", "stream-json"]
         }
         p.environment = Agent.env(a.isolated())
@@ -260,6 +261,13 @@ enum Agent: String, CaseIterable {
     }
 
     var alive: Bool { proc?.isRunning == true }
+
+    /// 不包潤稿標籤，直接送一段內容（智慧建議用，系統指令放 ruleOverride）
+    func raw(_ content: String, model m: String, timeout: Double) async -> String? {
+        prepare(model: m)
+        if let w = warm { _ = await w.value; warm = nil }
+        return await ask(content, timeout: timeout)
+    }
 
     func polish(_ text: String, app: String, context: String = "", screen: String = "", terms: String, model m: String) async -> String? {
         prepare(model: m)
@@ -459,14 +467,20 @@ enum Agent: String, CaseIterable {
         return await ask(Polisher.message(text, app: app, context: context, terms: ""), timeout: 4 + Double(text.count) / 40)
     }
 
+    /// 換系統指令送一段內容（智慧建議用）
+    func raw(_ content: String, system: String, timeout: Double) async -> String? {
+        prepare()
+        return await ask(content, system: system, timeout: timeout)
+    }
+
     /// 模型還在載入就重試，直到時間用完
-    private func ask(_ content: String, timeout: Double) async -> String? {
+    private func ask(_ content: String, system: String = LocalPolisher.rule, timeout: Double) async -> String? {
         let deadline = Date().addingTimeInterval(timeout + (warmed ? 0 : 20))   // 第一次載入最多再多等 20 秒
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "messages": [["role": "system", "content": Self.rule], ["role": "user", "content": content]],
+            "messages": [["role": "system", "content": system], ["role": "user", "content": content]],
             "temperature": 0, "max_tokens": 1000])
         while Date() < deadline {
             req.timeoutInterval = max(1, deadline.timeIntervalSinceNow)

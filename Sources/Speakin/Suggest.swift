@@ -13,9 +13,9 @@ import SwiftUI
 
     /// 開 App 時呼叫：距離上次檢查滿 7 天才跑（剛好對上「看最近 7 天」，紀錄不重疊），等 30 秒不跟開機搶資源
     func onLaunch() {
-        // 紀錄會送給 Claude：只在本來就用 Claude 潤稿的人身上跑（關掉潤稿、選本機或 Codex 的人，文字本來不會給 Claude）
+        // 用使用者選的潤稿工具跑：紀錄只會交給他本來就在用的那一家（或本機）
         let st = Store.shared.settings
-        guard st.polish, ["auto", "haiku", "sonnet"].contains(st.model), Agent.claude.path != nil else { return }
+        guard st.polish, st.smartSuggest, Suggest.model() != nil else { return }
         guard Store.shared.history.contains(where: { Date().timeIntervalSince($0.date) < 7 * 86400 }) else { return }   // 沒紀錄就不跑，也不記時間
         if let d = UserDefaults.standard.object(forKey: Self.lastRunKey) as? Date, Date().timeIntervalSince(d) < 7 * 86400 { return }
         Task { try? await Task.sleep(for: .seconds(30)); await run() }
@@ -24,7 +24,8 @@ import SwiftUI
     func run() async {
         guard !busy else { return }
         busy = true
-        let r = await Suggest.find(Store.shared.history, dict: Store.shared.dict)
+        guard let m = Suggest.model() else { busy = false; return }
+        let r = await Suggest.find(Store.shared.history, dict: Store.shared.dict, model: m)
         busy = false
         guard let r else { return }   // 失敗不記時間，下次開 App 再試
         UserDefaults.standard.set(Date(), forKey: Self.lastRunKey)
@@ -139,12 +140,21 @@ enum Suggest {
     只輸出 JSON 陣列，不要其他文字：[{"wrong":"…","right":"…","example":"…"}]
     """
 
-    /// 最近 7 天、新的優先，最多約 3 萬字，免得太慢
-    static func prompt(_ h: [HistoryItem], dict: [DictEntry], now: Date = Date()) -> String {
+    /// 用哪個模型找：跟潤稿同一家；Claude 改用 Sonnet（Haiku 抓不太到），其他家用潤稿的模型，本機就用本機
+    @MainActor static func model() -> String? {
+        let m = Store.shared.settings.model == "auto" ? Agent.auto() : Store.shared.settings.model
+        guard let m else { return nil }
+        if m == "qwen" { return FileManager.default.fileExists(atPath: LocalPolisher.modelPath) ? m : nil }
+        guard let a = Agent.of(m), a.path != nil else { return nil }
+        return a == .claude ? "sonnet" : m
+    }
+
+    /// 最近 7 天、新的優先，最多約 3 萬字，免得太慢（本機模型只能讀約 4000 字，給 2000）
+    static func prompt(_ h: [HistoryItem], dict: [DictEntry], limit: Int = 30000, now: Date = Date()) -> String {
         var body = "", n = 0
         for x in h.sorted(by: { $0.date > $1.date }) where now.timeIntervalSince(x.date) < 7 * 86400 && !x.raw.isEmpty {
             let line = "辨識：\(x.raw)\n結果：\(x.text)\n\n"
-            if n + line.count > 30000 { break }
+            if n + line.count > limit { break }
             body += line; n += line.count
         }
         let have = dict.flatMap { e in e.heardAs.map { "\($0)→\(e.term)" } + [e.term] }.joined(separator: "、")
@@ -179,25 +189,16 @@ enum Suggest {
         }
     }
 
-    static func find(_ h: [HistoryItem], dict: [DictEntry]) async -> [Item]? {
-        guard let bin = Agent.claude.path else { return nil }
-        let input = prompt(h, dict: dict)
-        let out: String? = await Task.detached {
-            let p = Process(), inP = Pipe(), outP = Pipe()
-            p.executableURL = URL(fileURLWithPath: bin)
-            p.arguments = ["-p", "--model", "sonnet", "--system-prompt", rule, "--output-format", "text",
-                           "--strict-mcp-config", "--tools", "", "--setting-sources", "", "--no-session-persistence"]
-            p.environment = Agent.env()
-            p.currentDirectoryURL = FileManager.default.temporaryDirectory
-            p.standardInput = inP; p.standardOutput = outP; p.standardError = FileHandle.nullDevice
-            guard (try? p.run()) != nil else { return nil }
-            let kill = DispatchWorkItem { p.terminate() }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: kill)
-            try? inP.fileHandleForWriting.write(contentsOf: Data(input.utf8)); try? inP.fileHandleForWriting.close()
-            let d = outP.fileHandleForReading.readDataToEndOfFile()
-            p.waitUntilExit(); kill.cancel()
-            return String(data: d, encoding: .utf8)
-        }.value
+    @MainActor static func find(_ h: [HistoryItem], dict: [DictEntry], model m: String) async -> [Item]? {
+        let out: String?
+        if m == "qwen" {
+            out = await Speakin.shared.local.raw(prompt(h, dict: dict, limit: 2000), system: rule, timeout: 300)
+        } else {
+            let p = Polisher(); p.ruleOverride = rule
+            out = await p.raw(prompt(h, dict: dict), model: m, timeout: 300)
+            p.kill()
+        }
+        if ProcessInfo.processInfo.environment["SPEAKIN_DEBUG"] != nil { print("回：", out ?? "nil") }
         return out.flatMap { parse($0, dict: dict) }
     }
 

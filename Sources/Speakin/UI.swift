@@ -522,7 +522,7 @@ struct DictView: View {
                 Picker("篩選", selection: $filter) {
                     Text("全部").tag(0); Text("自動加入").tag(1); Text("手動加入").tag(2)
                 }.pickerStyle(.segmented).labelsHidden().fixedSize()
-                SuggestPill(on: filter == 3) { filter = filter == 3 ? 0 : 3 }   // 智慧建議另外一顆，數字只出現在這裡
+                if store.settings.polish && store.settings.smartSuggest { SuggestPill(on: filter == 3) { filter = filter == 3 ? 0 : 3 } }   // 智慧建議另外一顆，數字只出現在這裡
                 Spacer()
                 if !picked.isEmpty {
                     Text("已勾選 \(picked.count) 個").foregroundStyle(.secondary)
@@ -712,6 +712,7 @@ struct SettingsView: View {
                     } label: { Text("用什麼潤稿"); Text(polishNote ?? "用你電腦上已經登入的 AI 工具。") }
                     if store.settings.model == "qwen" { localModel }
                     Toggle(isOn: $store.settings.context) { Text("參考畫面上的字"); Text("讓辨識和潤稿知道你前面寫了什麼；個資和金鑰會先遮掉。") }
+                    Toggle(isOn: $store.settings.smartSuggest) { Text("智慧建議"); Text("每 7 天用上面選的工具看一次最近講的話，找出常被聽錯的詞，放在字典頁讓你決定要不要加。") }
                 }
             } header: { Label("潤稿", systemImage: "wand.and.stars") }
             .task {

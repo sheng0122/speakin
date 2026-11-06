@@ -52,7 +52,7 @@ enum RecordKey: String, Codable, CaseIterable {
 }
 
 struct Settings: Codable, Equatable {
-    private enum CodingKeys: String, CodingKey { case polish, model, asrModel, context, keepClipboard, sounds, muteOthers, mic, fnMode, recordKey, fnHold, historyDays, micAlwaysOn, avoidBluetooth, onboarded, smooth, autoEnter, hideDock }
+    private enum CodingKeys: String, CodingKey { case polish, model, asrModel, context, keepClipboard, sounds, muteOthers, mic, fnMode, recordKey, smartSuggest, fnHold, historyDays, micAlwaysOn, avoidBluetooth, onboarded, smooth, autoEnter, hideDock }
     var polish = true
     var model = "auto"
     var asrModel = Store.dir.appendingPathComponent("models/TEA-ASR-1.1-Q6_K.gguf").path
@@ -63,6 +63,7 @@ struct Settings: Codable, Equatable {
     var mic: String? = nil   // 麥克風 UID，nil = 跟系統設定
     var fnMode = FnMode.both
     var recordKey = RecordKey.fn
+    var smartSuggest = true   // 智慧建議：每 7 天用潤稿工具找常被聽錯的詞
     var historyDays: Int? = nil   // 歷史和錄音留幾天；nil = 一直留，0 = 不存
     var micAlwaysOn = false   // 麥克風常開：按下前 0.45 秒也收得到，句首不漏字（橘點會一直亮）
     var onboarded = false   // 走完第一次的引導
@@ -76,7 +77,7 @@ struct Settings: Codable, Equatable {
         var c = e.container(keyedBy: CodingKeys.self)
         try c.encode(polish, forKey: .polish); try c.encode(model, forKey: .model); try c.encode(asrModel, forKey: .asrModel)
         try c.encode(context, forKey: .context); try c.encode(keepClipboard, forKey: .keepClipboard); try c.encode(sounds, forKey: .sounds)
-        try c.encode(muteOthers, forKey: .muteOthers); try c.encodeIfPresent(mic, forKey: .mic); try c.encode(fnMode, forKey: .fnMode); try c.encode(recordKey, forKey: .recordKey)
+        try c.encode(muteOthers, forKey: .muteOthers); try c.encodeIfPresent(mic, forKey: .mic); try c.encode(fnMode, forKey: .fnMode); try c.encode(recordKey, forKey: .recordKey); try c.encode(smartSuggest, forKey: .smartSuggest)
         try c.encodeIfPresent(historyDays, forKey: .historyDays); try c.encode(micAlwaysOn, forKey: .micAlwaysOn)
         try c.encode(avoidBluetooth, forKey: .avoidBluetooth); try c.encode(onboarded, forKey: .onboarded); try c.encode(smooth, forKey: .smooth)
         try c.encode(autoEnter, forKey: .autoEnter); try c.encode(hideDock, forKey: .hideDock)
@@ -97,6 +98,7 @@ struct Settings: Codable, Equatable {
         hideDock = try c.decodeIfPresent(Bool.self, forKey: .hideDock) ?? x.hideDock
         // 舊設定只有 fnHold：照原本的習慣，不偷換
         recordKey = try c.decodeIfPresent(RecordKey.self, forKey: .recordKey) ?? x.recordKey
+        smartSuggest = try c.decodeIfPresent(Bool.self, forKey: .smartSuggest) ?? x.smartSuggest
         fnMode = try c.decodeIfPresent(FnMode.self, forKey: .fnMode) ?? (try c.decodeIfPresent(Bool.self, forKey: .fnHold)).map { $0 ? .hold : .tap } ?? x.fnMode
         historyDays = try c.decodeIfPresent(Int.self, forKey: .historyDays)
         micAlwaysOn = try c.decodeIfPresent(Bool.self, forKey: .micAlwaysOn) ?? x.micAlwaysOn
