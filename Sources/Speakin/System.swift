@@ -1,7 +1,7 @@
 import AppKit
 import ApplicationServices
 
-/// 全域快捷鍵：Fn 開始/結束（三種模式見 FnMode）；⌥⇧V = 再貼一次上一句；錄音中 Esc = 取消。
+/// 全域快捷鍵：Fn（或設定裡選的右邊修飾鍵）開始/結束（三種模式見 FnMode）；⌥⇧V = 再貼一次上一句；錄音中 Esc = 取消。
 /// 在硬體事件層攔截並吃掉 Fn，系統才不會拿去切換輸入法。
 /// 按鍵在專用執行緒處理，主執行緒（畫面、讀輸入框）卡住也不會拖慢；拖太久系統會放行 Fn 去切輸入法。
 final class Hotkey {
@@ -14,6 +14,11 @@ final class Hotkey {
     var mode: FnMode {
         get { lock.withLock { _mode } }
         set { lock.withLock { _mode = newValue } }
+    }
+    private var _key = RecordKey.fn
+    var key: RecordKey {
+        get { lock.withLock { _key } }
+        set { lock.withLock { _key = newValue } }
     }
     private let lock = NSLock()
     private var _recording = false
@@ -92,8 +97,8 @@ final class Hotkey {
             }
         case .keyUp where e.getIntegerValueField(.keyboardEventKeycode) == 9 && e.flags.contains([.maskAlternate, .maskShift]):
             return nil
-        case .flagsChanged where e.getIntegerValueField(.keyboardEventKeycode) == 63:
-            let down = e.flags.contains(.maskSecondaryFn)
+        case .flagsChanged where e.getIntegerValueField(.keyboardEventKeycode) == key.keyCode:
+            let k = key, down = k.isDown(e.flags)
             let m = mode
             if down {
                 fnDown = Date(); otherKey = false; stopPress = recording
@@ -115,7 +120,7 @@ final class Hotkey {
                     // 短按：繼續錄（免持），再點一下 Fn 結束
                 }
             }
-            return nil   // 吃掉 Fn 的按下和放開
+            return k == .fn ? nil : pass   // 吃掉 Fn 的按下和放開；右邊的修飾鍵放行，⌘C 這種組合才不會壞
         default: break
         }
         return pass

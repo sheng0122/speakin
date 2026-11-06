@@ -19,6 +19,23 @@ struct SpeakinApp: App {
             }
             exit(0)
         }
+        // 預覽開 App 跳出的字典建議（假資料）：Speakin --preview-suggest
+        #if EXPERIMENTAL
+        if CommandLine.arguments.contains("--preview-suggest") {
+            MainActor.assumeIsolated {
+                let app = NSApplication.shared; app.setActivationPolicy(.regular)
+                let fake = [("cloud", "Claude", "錄音超過二十秒會多開兩個 cloud 程式"), ("論文", "潤稿", "潤稿被聽成論文這種比較常見的錯字"),
+                            ("remi", "README", "我覺得你的 remi 寫的也很差呢"), ("mc", "MCP", "你再重新回來看一下我們的這個 mc 這個工具"),
+                            ("type less", "Typeless", "跟 type less 比起來我們快多少"), ("瑞克", "Rust", "改成瑞克記憶體會更小嗎"), ("黑酷", "Haiku", "裡面大約是黑酷本身在想")]
+                    .map { Suggest.Item(wrong: $0.0, right: $0.1, example: $0.2) }
+                let w = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+                w.titlebarAppearsTransparent = true; w.title = ""
+                w.contentViewController = NSHostingController(rootView: SuggestPopup(items: fake) { exit(0) })
+                w.center(); w.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true); app.run()
+            }
+            exit(0)
+        }
+        #endif
         // 預覽主視窗＋錄音膠囊（假音量，不錄音、不動設定）：Speakin --preview-main
         if CommandLine.arguments.contains("--preview-main") {
             MainActor.assumeIsolated {
@@ -343,6 +360,9 @@ enum SelfTest {
         check(TextFix.joinParts(["第一句。", "第二句。"]) == "第一句。第二句。"
               && TextFix.joinParts([String(repeating: "字", count: 150), "下一句。"]) == String(repeating: "字", count: 150) + "\n\n下一句。"
               && TextFix.joinParts(["我想問：", "1. A\n2. B", "好。"]) == "我想問：\n\n1. A\n2. B\n\n好。", "分塊接回去")
+        // 0x100000 = ⌘ 有按；0x10 = 右邊、0x08 = 左邊
+        check(RecordKey.rightCommand.isDown(CGEventFlags(rawValue: 0x100010)) && !RecordKey.rightCommand.isDown(CGEventFlags(rawValue: 0x100008))
+              && RecordKey.fn.isDown(.maskSecondaryFn) && !RecordKey.rightOption.isDown(CGEventFlags(rawValue: 0x80020)), "錄音鍵分得出左右")
         check(TextFix.question("你懂我說的嗎") == "你懂我說的嗎？" && TextFix.question("剛剛的蘋果風呢") == "剛剛的蘋果風呢"
               && TextFix.question("好了。") == "好了。", "短句補問號")
         check(TextFix.applyDict("用 cloudflare 跟 cloud code", [DictEntry(term: "claude", heardAs: ["Cloudflare"]), DictEntry(term: "Cloudflare", heardAs: []), DictEntry(term: "Claude Code", heardAs: ["cloud code"])])

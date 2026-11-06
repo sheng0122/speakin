@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import SQLite3
 
 struct DictEntry: Codable, Identifiable, Hashable, Rowable {
@@ -39,8 +40,19 @@ struct HistoryItem: Codable, Identifiable, Equatable, Rowable {
 /// tap = 按一下開始、再按一下結束；hold = 按住講、放開結束；both = 按住講放開結束，點一下就免持、再點一下結束
 enum FnMode: String, Codable { case tap, hold, both }
 
+/// 錄音用哪個鍵。都是單獨按的修飾鍵，偵測方式跟 Fn 一樣（沒有 Fn 的外接鍵盤可以改用右邊的鍵）
+enum RecordKey: String, Codable, CaseIterable {
+    case fn, rightCommand, rightOption, rightControl, rightShift
+    var name: String { ["fn": "Fn", "rightCommand": "右邊的 ⌘", "rightOption": "右邊的 ⌥", "rightControl": "右邊的 ⌃", "rightShift": "右邊的 ⇧"][rawValue]! }
+    var keyCode: Int64 { [.fn: 63, .rightCommand: 54, .rightOption: 61, .rightControl: 62, .rightShift: 60][self]! }
+    /// 這個鍵有沒有被按著；右邊的鍵要看分左右的那一位，左邊按著時放開右邊才判斷得對
+    func isDown(_ f: CGEventFlags) -> Bool {
+        self == .fn ? f.contains(.maskSecondaryFn) : f.rawValue & [.rightCommand: 0x10, .rightOption: 0x40, .rightControl: 0x2000, .rightShift: 0x04][self]! != 0
+    }
+}
+
 struct Settings: Codable, Equatable {
-    private enum CodingKeys: String, CodingKey { case polish, model, asrModel, context, keepClipboard, sounds, muteOthers, mic, fnMode, fnHold, historyDays, micAlwaysOn, avoidBluetooth, onboarded, smooth, autoEnter, hideDock }
+    private enum CodingKeys: String, CodingKey { case polish, model, asrModel, context, keepClipboard, sounds, muteOthers, mic, fnMode, recordKey, fnHold, historyDays, micAlwaysOn, avoidBluetooth, onboarded, smooth, autoEnter, hideDock }
     var polish = true
     var model = "auto"
     var asrModel = Store.dir.appendingPathComponent("models/TEA-ASR-1.1-Q6_K.gguf").path
@@ -50,6 +62,7 @@ struct Settings: Codable, Equatable {
     var muteOthers = true   // 錄音時把其他聲音靜音（音樂、影片）
     var mic: String? = nil   // 麥克風 UID，nil = 跟系統設定
     var fnMode = FnMode.both
+    var recordKey = RecordKey.fn
     var historyDays: Int? = nil   // 歷史和錄音留幾天；nil = 一直留，0 = 不存
     var micAlwaysOn = false   // 麥克風常開：按下前 0.45 秒也收得到，句首不漏字（橘點會一直亮）
     var onboarded = false   // 走完第一次的引導
@@ -63,7 +76,7 @@ struct Settings: Codable, Equatable {
         var c = e.container(keyedBy: CodingKeys.self)
         try c.encode(polish, forKey: .polish); try c.encode(model, forKey: .model); try c.encode(asrModel, forKey: .asrModel)
         try c.encode(context, forKey: .context); try c.encode(keepClipboard, forKey: .keepClipboard); try c.encode(sounds, forKey: .sounds)
-        try c.encode(muteOthers, forKey: .muteOthers); try c.encodeIfPresent(mic, forKey: .mic); try c.encode(fnMode, forKey: .fnMode)
+        try c.encode(muteOthers, forKey: .muteOthers); try c.encodeIfPresent(mic, forKey: .mic); try c.encode(fnMode, forKey: .fnMode); try c.encode(recordKey, forKey: .recordKey)
         try c.encodeIfPresent(historyDays, forKey: .historyDays); try c.encode(micAlwaysOn, forKey: .micAlwaysOn)
         try c.encode(avoidBluetooth, forKey: .avoidBluetooth); try c.encode(onboarded, forKey: .onboarded); try c.encode(smooth, forKey: .smooth)
         try c.encode(autoEnter, forKey: .autoEnter); try c.encode(hideDock, forKey: .hideDock)
@@ -83,6 +96,7 @@ struct Settings: Codable, Equatable {
         autoEnter = try c.decodeIfPresent(Bool.self, forKey: .autoEnter) ?? x.autoEnter
         hideDock = try c.decodeIfPresent(Bool.self, forKey: .hideDock) ?? x.hideDock
         // 舊設定只有 fnHold：照原本的習慣，不偷換
+        recordKey = try c.decodeIfPresent(RecordKey.self, forKey: .recordKey) ?? x.recordKey
         fnMode = try c.decodeIfPresent(FnMode.self, forKey: .fnMode) ?? (try c.decodeIfPresent(Bool.self, forKey: .fnHold)).map { $0 ? .hold : .tap } ?? x.fnMode
         historyDays = try c.decodeIfPresent(Int.self, forKey: .historyDays)
         micAlwaysOn = try c.decodeIfPresent(Bool.self, forKey: .micAlwaysOn) ?? x.micAlwaysOn

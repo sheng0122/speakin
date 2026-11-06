@@ -59,6 +59,7 @@ import AVFoundation
             }
         } }
         hotkey.mode = store.settings.fnMode
+        hotkey.key = store.settings.recordKey
         hotkey.onEsc = { [weak self] in MainActor.assumeIsolated { _ = self?.cancel() } }
         hotkey.onPasteLast = { [weak self] in MainActor.assumeIsolated { self?.pasteLast() } }
         lastText = store.history.last(where: { !$0.text.isEmpty })?.text ?? ""

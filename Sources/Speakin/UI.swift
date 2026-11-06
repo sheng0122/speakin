@@ -652,110 +652,102 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("一般") {
-                Toggle("開機時自動開啟", isOn: Binding(
+            Section {
+                Toggle(isOn: Binding(
                     get: { loginOn },
                     set: { on in
                         do { try on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister() } catch { NSLog("開機啟動設定失敗：\(error)") }
                         loginOn = SMAppService.mainApp.status == .enabled
-                    }))
-                Picker("Fn 鍵", selection: $store.settings.fnMode) {
+                    })) { Text("開機時自動開啟"); Text("電腦開機後自動打開 Speakin。") }
+                Picker(selection: $store.settings.recordKey) {
+                    ForEach(RecordKey.allCases, id: \.self) { Text($0.name).tag($0) }
+                } label: { Text("錄音鍵"); Text("沒有 Fn 鍵的外接鍵盤，可以改用右邊的 ⌘ 或 ⌥。") }
+                .onChange(of: store.settings.recordKey) { _, v in Speakin.shared.hotkey.key = v }
+                Picker(selection: $store.settings.fnMode) {
                     Text("按住講放開結束，或點一下免持").tag(FnMode.both)
                     Text("按一下開始，再按一下結束").tag(FnMode.tap)
                     Text("按住講，放開結束").tag(FnMode.hold)
-                }
+                } label: { Text("錄音的按法"); Text("⌥⇧V 可以再貼一次上一句。") }
                 .onChange(of: store.settings.fnMode) { _, v in Speakin.shared.hotkey.mode = v }
-                Text("⌥⇧V：再貼一次上一句。").font(.caption).foregroundStyle(.secondary)
-                Toggle("不在 Dock 顯示", isOn: $store.settings.hideDock)
+                Toggle(isOn: $store.settings.hideDock) { Text("不在 Dock 顯示"); Text("只留上方選單列的圖示。") }
                     .onChange(of: store.settings.hideDock) { _, v in
                         NSApp.setActivationPolicy(v ? .accessory : .regular)
                         NSApp.activate(ignoringOtherApps: true)   // 切換後視窗會被丟到後面，拉回來
                     }
-                Toggle("提示音", isOn: $store.settings.sounds)
-                    .help("開始錄音時響一聲")
-                Picker("麥克風", selection: $store.settings.mic) {
+                Toggle(isOn: $store.settings.sounds) { Text("提示音"); Text("開始錄音時響一聲。") }
+                Picker(selection: $store.settings.mic) {
                     Text("跟系統設定").tag(String?.none)
                     ForEach(SystemAudio.inputs, id: \.uid) { Text($0.name).tag(Optional($0.uid)) }
-                }
+                } label: { Text("麥克風"); Text("講講看，下面的音量條要過那條線才聽得到你。") }
                 .onChange(of: store.settings.mic) { _, _ in Speakin.shared.applyMic() }
                 if let uid = store.settings.mic, SystemAudio.device(uid: uid) == nil {
                     Text("選的麥克風沒接上，先用系統預設的。").font(.caption).foregroundStyle(brand)
                 }
                 MicMeter(mic: store.settings.mic)
-                Toggle("用藍牙耳機時改用內建麥克風", isOn: $store.settings.avoidBluetooth)
-                    .help("AirPods 當麥克風會切成通話模式，音樂變很糊。只在「跟系統設定」時有用")
+                Toggle(isOn: $store.settings.avoidBluetooth) { Text("用藍牙耳機時改用內建麥克風"); Text("AirPods 當麥克風會切成通話模式，音樂變很糊。只在「跟系統設定」時有用。") }
                     .onChange(of: store.settings.avoidBluetooth) { _, _ in Speakin.shared.applyMic() }
-                Toggle("麥克風常開（句首不漏字）", isOn: $store.settings.micAlwaysOn)
-                    .help("按下 Fn 前 0.45 秒的聲音也收得到。代價是右上角橘點一直亮；聲音只留在記憶體，不會存檔")
+                Toggle(isOn: $store.settings.micAlwaysOn) { Text("麥克風常開"); Text("按下錄音鍵前 0.45 秒的聲音也收得到，句首不漏字。代價是右上角橘點一直亮；聲音只留在記憶體，不會存檔。") }
                     .onChange(of: store.settings.micAlwaysOn) { _, _ in Speakin.shared.applyMic() }
-                Toggle("錄音時把其他聲音靜音", isOn: $store.settings.muteOthers)
-                    .help("音樂、影片在錄音時先靜音，講完自動恢復")
-            }
-            Section("潤稿") {
-                Toggle("自動潤稿", isOn: $store.settings.polish)
-                    .help("關掉就直接貼辨識結果，文字不會離開電腦")
+                Toggle(isOn: $store.settings.muteOthers) { Text("錄音時把其他聲音靜音"); Text("音樂、影片在錄音時先靜音，講完自動恢復。") }
+            } header: { Label("一般", systemImage: "gearshape") }
+            Section {
+                Toggle(isOn: $store.settings.polish) { Text("自動潤稿"); Text("關掉就直接貼辨識結果，文字不會離開電腦。") }
                 if store.settings.polish {
-                    Picker("潤稿方式", selection: $store.settings.smooth) {
+                    Picker(selection: $store.settings.smooth) {
                         Text("保留原話").tag(false)
                         Text("整理通順").tag(true)
-                    }
-                    Picker("用什麼潤稿", selection: $store.settings.model) {
+                    } label: { Text("潤稿方式"); Text("「保留原話」盡量照你講的；「整理通順」會把句子理順。") }
+                    Picker(selection: $store.settings.model) {
                         Text("自動").tag("auto")
                         ForEach(Agent.allCases.filter { agents?[$0] != nil }, id: \.self) { a in
                             Text(a.name + (a == .claude ? "（最快）" : "") + (agents?[a] == true ? "" : "（沒登入）")).tag(a == .claude ? "haiku" : a.rawValue)
                         }
                         if store.settings.model == "sonnet" { Text("Claude Code（Sonnet，較慢）").tag("sonnet") }
                         Text("本機（不上網，較慢）").tag("qwen")
-                    }
-                    if let note = polishNote { Text(note).font(.caption).foregroundStyle(.secondary) }
+                    } label: { Text("用什麼潤稿"); Text(polishNote ?? "用你電腦上已經登入的 AI 工具。") }
                     if store.settings.model == "qwen" { localModel }
-                    Toggle("參考畫面上的字", isOn: $store.settings.context)
-                        .help("讓辨識和潤稿知道你前面寫了什麼；個資和金鑰會先遮掉")
+                    Toggle(isOn: $store.settings.context) { Text("參考畫面上的字"); Text("讓辨識和潤稿知道你前面寫了什麼；個資和金鑰會先遮掉。") }
                 }
-            }
+            } header: { Label("潤稿", systemImage: "wand.and.stars") }
             .task {
                 // 問登入狀態要跑外部程式（1～3 秒），放背景做
                 agents = await Task.detached { Agent.detect() }.value
                 Agent.ready = agents
             }
-            Section("貼上") {
-                Toggle("貼上後保留在剪貼簿", isOn: $store.settings.keepClipboard)
-                    .help("關著時會把你原本複製的東西還原")
-                Toggle("貼上後自動按 Enter 送出", isOn: $store.settings.autoEnter)
-                    .help("聊天、AI 對話框講完就直接送出，不用再按 Enter。寫文件時會多一個換行，用不到就關掉")
-            }
-            Section("紀錄") {
-                Picker("歷史紀錄和錄音保留", selection: $store.settings.historyDays) {
+            Section {
+                Toggle(isOn: $store.settings.keepClipboard) { Text("貼上後保留在剪貼簿"); Text("關著時會把你原本複製的東西還原。") }
+                Toggle(isOn: $store.settings.autoEnter) { Text("貼上後自動按 Enter 送出"); Text("聊天、AI 對話框講完就直接送出。寫文件時會多一個換行，用不到就關掉。") }
+            } header: { Label("貼上", systemImage: "doc.on.clipboard") }
+            Section {
+                Picker(selection: $store.settings.historyDays) {
                     Text("一直留").tag(Int?.none)
                     Text("90 天").tag(Int?.some(90))
                     Text("30 天").tag(Int?.some(30))
                     Text("7 天").tag(Int?.some(7))
                     Text("1 天").tag(Int?.some(1))
                     Text("不存").tag(Int?.some(0))
-                }
+                } label: { Text("歷史紀錄和錄音保留"); Text("講的內容常有公司資料，只留需要的天數。改短會馬上刪掉比較舊的，刪了救不回來。設成「不存」之後的錄音也不存；已經存的要到歷史紀錄自己刪。") }
                 .onChange(of: store.settings.historyDays) { _, _ in store.pruneHistory() }
-                Text("講的內容常有公司資料，只留需要的天數。改短會馬上刪掉比較舊的，刪了救不回來。設成「不存」之後的錄音也不存；已經存的要到歷史紀錄自己刪。").font(.caption).foregroundStyle(.secondary)
-            }
+            } header: { Label("紀錄", systemImage: "clock") }
             if asrModels.count > 1 {
-                Section("語音辨識") {
+                Section {
                     Picker("辨識模型", selection: $store.settings.asrModel) {
                         ForEach(asrModels, id: \.self) { Text(Self.asrName($0)).tag($0) }
                     }
-                }
+                } header: { Label("語音辨識", systemImage: "waveform") }
             }
-            Section("Fn 鍵沒反應") {
-                LabeledContent("按 Fn 跳出表情符號") {
+            Section {
+                LabeledContent {
                     Button("打開鍵盤設定") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!) }
-                }
-                Text("把「按下 🌐 鍵時」改成「不執行任何動作」。Typeless 開著也會搶 Fn 鍵。").font(.caption).foregroundStyle(.secondary)
-            }
-            Section("更新") {
+                } label: { Text("按 Fn 跳出表情符號"); Text("把「按下 🌐 鍵時」改成「不執行任何動作」。Typeless 開著也會搶 Fn 鍵。") }
+            } header: { Label("Fn 鍵沒反應", systemImage: "questionmark.circle") }
+            Section {
                 LabeledContent("版本 \(Updater.current)") {
                     if let n = u.update, let app = u.staged { Button("重開完成更新 \(n.version)") { Updater.install(app) } }
                     else if let n = u.update { Button("下載新版 \(n.version)") { NSWorkspace.shared.open(n.url) } }
                     else { Button("檢查更新") { Task { await u.checkUpdate(manual: true) } } }
                 }
-            }
+            } header: { Label("更新", systemImage: "arrow.down.circle") }
         }.formStyle(.grouped)
     }
 
