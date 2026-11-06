@@ -176,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 for a in Agent.allCases { print(a.name, a.path ?? "沒裝", a.path == nil ? "" : a.loggedIn() ? "已登入" : "沒登入") }
                 let p = Polisher(); p.smooth = args.contains("--smooth")
+                p.ruleOverride = args.firstIndex(of: "--rule").flatMap { try? String(contentsOfFile: args[$0 + 1], encoding: .utf8) }
                 // --screen 檔案：當成畫面內容一起送，量「給畫面」有沒有幫助
                 let screen = args.firstIndex(of: "--screen").flatMap { try? String(contentsOfFile: args[$0 + 1], encoding: .utf8) }.map { String($0.suffix(2000)) } ?? ""
                 if args[i + 1] == "qwen" { Speakin.shared.local.prepare() } else { p.prepare(model: args[i + 1], fresh: true) }

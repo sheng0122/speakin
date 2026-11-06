@@ -190,6 +190,7 @@ enum Agent: String, CaseIterable {
     """)
 
     var smooth = false
+    var ruleOverride: String?   // 測試用：Speakin --polish haiku --rule 檔案，換潤稿指令不用重新編譯
     private var proc: Process?
     private var stdin: FileHandle?
     private var model = ""
@@ -208,7 +209,7 @@ enum Agent: String, CaseIterable {
     /// 錄音一開始就叫，讓模型在你講話時先暖機
     func prepare(model m: String, fresh: Bool = false) {
         touch()
-        let r = smooth ? Self.smoothRule : Self.rule
+        let r = ruleOverride ?? (smooth ? Self.smoothRule : Self.rule)
         if proc?.isRunning == true, m == model, r == ruleUsed, turns < 40, !(fresh && turns > 0) { return }
         kill()
         guard let a = Agent.of(m), let bin = a.path else { return }
