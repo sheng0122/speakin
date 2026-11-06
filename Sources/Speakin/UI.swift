@@ -104,13 +104,7 @@ struct MainView: View {
                 ForEach(tabs, id: \.0) { t in
                     let on = u.tab == t.0
                     Button { u.tab = t.0 } label: {
-                        HStack {
-                            Label(t.0, systemImage: t.1)
-                            Spacer()
-                            #if EXPERIMENTAL
-                            if t.0 == "字典" { SuggestCount(on: on) }
-                            #endif
-                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        Label(t.0, systemImage: t.1).frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 10).padding(.vertical, 7)
                             .background(RoundedRectangle(cornerRadius: 8).fill(on ? brand : .clear))
                             .foregroundStyle(on ? .white : .primary).contentShape(Rectangle())
@@ -529,10 +523,10 @@ struct DictView: View {
             HStack(spacing: 10) {
                 Picker("篩選", selection: $filter) {
                     Text("全部").tag(0); Text("自動加入").tag(1); Text("手動加入").tag(2)
-                    #if EXPERIMENTAL
-                    Text(sug.items.isEmpty ? "建議" : "建議 \(sug.items.count)").tag(3)
-                    #endif
                 }.pickerStyle(.segmented).labelsHidden().fixedSize()
+                #if EXPERIMENTAL
+                SuggestPill(on: filter == 3) { filter = filter == 3 ? 0 : 3 }   // 建議另外一顆，數字只出現在這裡
+                #endif
                 Spacer()
                 if !picked.isEmpty {
                     Text("已勾選 \(picked.count) 個").foregroundStyle(.secondary)
