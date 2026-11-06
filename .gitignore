@@ -1,0 +1,8 @@
+.build/
+Utter.app/
+Speakin.app/
+.DS_Store
+Vendor/
+__pycache__/
+dist/
+eval/
