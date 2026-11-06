@@ -340,6 +340,8 @@ enum SelfTest {
         check(TextFix.joinParts(["第一句。", "第二句。"]) == "第一句。第二句。"
               && TextFix.joinParts([String(repeating: "字", count: 150), "下一句。"]) == String(repeating: "字", count: 150) + "\n\n下一句。"
               && TextFix.joinParts(["我想問：", "1. A\n2. B", "好。"]) == "我想問：\n\n1. A\n2. B\n\n好。", "分塊接回去")
+        check(TextFix.question("你懂我說的嗎") == "你懂我說的嗎？" && TextFix.question("剛剛的蘋果風呢") == "剛剛的蘋果風呢"
+              && TextFix.question("好了。") == "好了。", "短句補問號")
         check(TextFix.applyDict("用 cloudflare 跟 cloud code", [DictEntry(term: "claude", heardAs: ["Cloudflare"]), DictEntry(term: "Cloudflare", heardAs: []), DictEntry(term: "Claude Code", heardAs: ["cloud code"])])
               == "用 Cloudflare 跟 Claude Code"
               && !Store.polishTerms([DictEntry(term: "claude", heardAs: ["Cloudflare"]), DictEntry(term: "Cloudflare", heardAs: [])], for: "cloudflare").contains("常被聽成"), "常被聽成是另一個字典詞時不換")

@@ -173,6 +173,11 @@ enum TextFix {
     }
 
     /// 中文和英文、數字之間補一個空白（「用Claude寫3段」→「用 Claude 寫 3 段」）。模型常漏，用程式補才穩。
+    /// 短句不潤稿，不會補標點：句尾是一定是問句的字就補問號。「呢」「要不要」不算（「寫得很差呢」「可以選要不要」）
+    static func question(_ s: String) -> String {
+        ["嗎", "是不是", "對不對", "好不好", "有沒有", "為什麼"].contains(where: s.hasSuffix) ? s + "？" : s
+    }
+
     static func space(_ s: String) -> String {
         s.replacingOccurrences(of: #"(\p{Han})([A-Za-z0-9])"#, with: "$1 $2", options: .regularExpression)
          .replacingOccurrences(of: #"([A-Za-z0-9%])(\p{Han})"#, with: "$1 $2", options: .regularExpression)

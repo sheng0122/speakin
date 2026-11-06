@@ -261,7 +261,7 @@ import AVFoundation
         defer { helpers.forEach { $0.kill() }; helpers = [] }
         guard runSettings.polish, !fixed.isEmpty else { return (raw, TextFix.space(fixed)) }
         // 不到 10 個字跳過潤稿：251 筆紀錄裡這種長度 93% 只改了標點，卻要多等約 1 秒
-        if fixed.filter({ $0.isLetter || $0.isNumber }).count < 10 { log.line("短句，不潤稿"); return (raw, TextFix.space(fixed)) }
+        if fixed.filter({ $0.isLetter || $0.isNumber }).count < 10 { log.line("短句，不潤稿"); return (raw, TextFix.question(TextFix.space(fixed))) }
         let parts = runSettings.model == "qwen" ? [fixed] : TextFix.chunks(fixed)
         totalParts = parts.count
         let workers = [polisher] + helpers
