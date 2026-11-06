@@ -28,6 +28,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   $UPDATE_KEY
+  <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSMicrophoneUsageDescription</key><string>Speakin 需要麥克風把你說的話轉成文字。</string>
 </dict></plist>

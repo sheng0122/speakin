@@ -183,9 +183,13 @@ struct MenuContent: View {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Info.plist 設了 LSUIElement：一開始就不在 Dock。要顯示的人在這裡才補上，開機時才不會先閃一下 Dock 圖示再收起來
+    func applicationWillFinishLaunching(_ n: Notification) {
+        if !Store.shared.settings.hideDock { NSApp.setActivationPolicy(.regular) }
+    }
+
     func applicationDidFinishLaunching(_ n: Notification) {
         signal(SIGPIPE, SIG_IGN)   // claude 掛掉時寫入管線不要把整個 App 拖死
-        if Store.shared.settings.hideDock { NSApp.setActivationPolicy(.accessory) }
         #if EXPERIMENTAL
         if CommandLine.arguments.count == 1 { Suggest.onLaunch() }   // 一般開 App 才檢查，測試用的參數不跑
         #endif
