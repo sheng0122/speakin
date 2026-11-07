@@ -26,18 +26,27 @@ enum TextFix {
         return (t as String).replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)
     }
 
+    /// 所有詞一次掃過去、長的先比：一條一條換的話，「Claude」會把已經對的「Claude Code」再換成「Claude Code Code」（#3）
     static func applyDict(_ s: String, _ dict: [DictEntry]) -> String {
-        var s = s
-        for e in DictEntry.sane(dict) {
-            for w in e.heardAs + [e.term] where !w.isEmpty {
-                let esc = NSRegularExpression.escapedPattern(for: w)
-                // 英文詞要整字比對，免得 online 變 onLINE
-                let pat = w.unicodeScalars.allSatisfy(\.isASCII) ? "(?<![A-Za-z])\(esc)(?![A-Za-z])" : esc
-                s = s.replacingOccurrences(of: pat, with: NSRegularExpression.escapedTemplate(for: e.term),
-                                           options: [.regularExpression, .caseInsensitive])
-            }
+        var to: [String: String] = [:]   // 小寫的寫法 → 正確寫法；同一個寫法先出現的算
+        for e in DictEntry.sane(dict) { for w in [e.term] + e.heardAs where !w.isEmpty { to[w.lowercased()] = to[w.lowercased()] ?? e.term } }
+        guard !to.isEmpty else { return s }
+        let alts = to.keys.sorted { $0.count > $1.count }.map { w in
+            let esc = NSRegularExpression.escapedPattern(for: w)
+            // 英文詞要整字比對，免得 online 變 onLINE
+            return w.unicodeScalars.allSatisfy(\.isASCII) ? "(?<![A-Za-z])\(esc)(?![A-Za-z])" : esc
         }
-        return s
+        guard let re = try? NSRegularExpression(pattern: alts.joined(separator: "|"), options: .caseInsensitive) else { return s }
+        let ns = s as NSString, out = NSMutableString()
+        var at = 0
+        for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out.append(ns.substring(with: NSRange(location: at, length: m.range.location - at)))
+            let hit = ns.substring(with: m.range)
+            out.append(to[hit.lowercased()] ?? hit)
+            at = m.range.location + m.range.length
+        }
+        out.append(ns.substring(from: at))
+        return out as String
     }
 
     static let junk = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).union(.symbols)

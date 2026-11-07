@@ -102,6 +102,8 @@ enum Agent: String, CaseIterable {
     static func env(_ extra: [String: String] = [:]) -> [String: String] {
         var e = ProcessInfo.processInfo.environment
         e["PATH"] = (dirs + ["/usr/bin", "/bin"]).joined(separator: ":")
+        // 從終端機打開時會帶到這些 key，CLI 看到就改走 API 計費，不用使用者的訂閱（#4）
+        for k in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"] { e[k] = nil }
         return e.merging(extra) { $1 }
     }
 
@@ -278,11 +280,18 @@ enum Agent: String, CaseIterable {
 
     nonisolated static func message(_ text: String, app: String, context: String, screen: String = "", terms: String) -> String {
         // 只給類別不給 App 名字：給了名字，Haiku 會把「它」換成 App 名字（「把它做到」→「把 Orca 做到」）
+        // 內容裡剛好有我們的標籤（畫面上有人貼了 </逐字稿>）會打斷邊界，先拿掉（#5）
+        let (text, context, screen, terms) = (stripTags(text), stripTags(context), stripTags(screen), stripTags(terms))
         var msg = "<情境>\(Zone.of(app))</情境>\n"
         if !screen.isEmpty { msg += "<畫面>\(screen)</畫面>\n" }
         if !context.isEmpty { msg += "<前文>\(context)</前文>\n" }
         if !terms.isEmpty { msg += "<字典>\(terms)</字典>\n" }
         return msg + "<逐字稿>\(text)</逐字稿>"
+    }
+
+    /// 拿掉送給模型的那幾個標籤；模型有時會把 <逐字稿> 抄回結果，回來的字也用這個清
+    nonisolated static func stripTags(_ s: String) -> String {
+        s.replacingOccurrences(of: "</?(逐字稿|前文|畫面|情境|字典)>", with: "", options: .regularExpression)
     }
 
     func timeout(_ text: String) -> Double { (agent == .claude ? 4 : 6) + Double(text.count) / 40 }   // 長文要輸出的字多，每 40 字多給 1 秒；其他家中位數慢一倍   // 長文要輸出的字多，每 40 字多給 1 秒
