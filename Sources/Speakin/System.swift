@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon
 
 /// 全域快捷鍵：Fn（或設定裡選的右邊修飾鍵）開始/結束（三種模式見 FnMode）；⌥⇧V = 再貼一次上一句；錄音中 Esc = 取消。
 /// 在硬體事件層攔截並吃掉 Fn，系統才不會拿去切換輸入法。
@@ -31,6 +32,9 @@ final class Hotkey {
     private var fnDown: Date?
     private var otherKey = false
     private var stopPress = false   // 兩種都可以：按下時已經在錄，這一下是「結束」
+    private var escDown = false     // 這次 Esc 按下被吃掉了，放開和長按連發也要吃掉，不然會漏到前景 App
+    /// 我們自己送的 ⌘V、Enter 都標上這個，攔截時認得出來直接放行（不算使用者按鍵）
+    static let mark: Int64 = 0x5350_4B4E   // "SPKN"
 
     func start() -> Bool {
         if tap != nil { return true }
@@ -76,9 +80,13 @@ final class Hotkey {
 
     private func route(_ type: CGEventType, _ e: CGEvent) -> Unmanaged<CGEvent>? {
         let pass = Unmanaged.passUnretained(e)
+        if e.getIntegerValueField(.eventSourceUserData) == Self.mark { return pass }
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
+            // 停用期間可能漏收放開：鍵其實已經放開了，就當成剛放開，不然按住模式會一直錄
+            if fnDown != nil, !key.isDown(CGEventSource.flagsState(.hidSystemState)) { release() }
+            escDown = false
         case .keyDown where e.getIntegerValueField(.keyboardEventKeycode) == 179,
              .keyUp where e.getIntegerValueField(.keyboardEventKeycode) == 179:
             return nil   // Fn 放開後系統補送的「地球鍵」，切輸入法靠的是它
@@ -86,8 +94,9 @@ final class Hotkey {
             otherKey = true
             let kc = e.getIntegerValueField(.keyboardEventKeycode), enter = [36, 76].contains(kc), now = Date()
             DispatchQueue.main.async { Learner.lastKey = now; if enter { Learner.lastEnter = now } }
-            if kc == 53, recording {
-                DispatchQueue.main.async { self.onEsc?() }
+            if kc == 53, recording || escDown {
+                if !escDown { DispatchQueue.main.async { self.onEsc?() } }
+                escDown = true
                 return nil
             }
             let mods = e.flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
@@ -97,33 +106,41 @@ final class Hotkey {
             }
         case .keyUp where e.getIntegerValueField(.keyboardEventKeycode) == 9 && e.flags.contains([.maskAlternate, .maskShift]):
             return nil
+        case .keyUp where e.getIntegerValueField(.keyboardEventKeycode) == 53 && escDown:
+            escDown = false
+            return nil
         case .flagsChanged where e.getIntegerValueField(.keyboardEventKeycode) == key.keyCode:
             let k = key, down = k.isDown(e.flags)
             let m = mode
             if down {
                 fnDown = Date(); otherKey = false; stopPress = recording
                 if m != .tap, !stopPress { DispatchQueue.main.async { self.onHold?(.down) } }
-            } else if let d = fnDown {
-                fnDown = nil
-                let short = Date().timeIntervalSince(d) < 0.3
-                switch m {
-                case .tap:
-                    if !otherKey, Date().timeIntervalSince(d) < 0.5 { DispatchQueue.main.async { self.onTap?() } }
-                case .hold:
-                    // ponytail: Fn＋其他鍵（例如 Fn＋Delete）也會先開始錄音，放開時才取消；要更乾淨就延遲 0.3 秒才開始
-                    let ev: HoldEvent = !otherKey && !short ? .up : .abort
-                    DispatchQueue.main.async { self.onHold?(ev) }
-                case .both:
-                    if stopPress { if !otherKey { DispatchQueue.main.async { self.onTap?() } } }
-                    else if otherKey { DispatchQueue.main.async { self.onHold?(.abort) } }
-                    else if !short { DispatchQueue.main.async { self.onHold?(.up) } }
-                    // 短按：繼續錄（免持），再點一下 Fn 結束
-                }
-            }
+            } else { release() }
             return k == .fn ? nil : pass   // 吃掉 Fn 的按下和放開；右邊的修飾鍵放行，⌘C 這種組合才不會壞
         default: break
         }
         return pass
+    }
+
+    /// 錄音鍵放開
+    private func release() {
+        guard let d = fnDown else { return }
+        let m = mode
+        fnDown = nil
+        let short = Date().timeIntervalSince(d) < 0.3
+        switch m {
+        case .tap:
+            if !otherKey, Date().timeIntervalSince(d) < 0.5 { DispatchQueue.main.async { self.onTap?() } }
+        case .hold:
+            // ponytail: Fn＋其他鍵（例如 Fn＋Delete）也會先開始錄音，放開時才取消；要更乾淨就延遲 0.3 秒才開始
+            let ev: HoldEvent = !otherKey && !short ? .up : .abort
+            DispatchQueue.main.async { self.onHold?(ev) }
+        case .both:
+            if stopPress { if !otherKey { DispatchQueue.main.async { self.onTap?() } } }
+            else if otherKey { DispatchQueue.main.async { self.onHold?(.abort) } }
+            else if !short { DispatchQueue.main.async { self.onHold?(.up) } }
+            // 短按：繼續錄（免持），再點一下 Fn 結束
+        }
     }
 }
 
@@ -155,23 +172,56 @@ enum Paster {
         if !keep { pb.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType")) }
         let mine = pb.changeCount
         pending = keep ? nil : (saved, mine)
-        let src = CGEventSource(stateID: .combinedSessionState)
-        for down in [true, false] {
-            let e = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: down)   // 9 = V
-            e?.flags = .maskCommand
-            e?.post(tap: .cghidEventTap)
-        }
-        // 等 App 把字貼進去再按 Enter，太快會先送出空白
+        let field = enter ? Learner.focused() : nil, before = field.flatMap(Learner.value)
+        key(vKey, flags: CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x8))   // 0x8 = 左邊 ⌘；少了它 Flutter 做的 App 會貼錯地方
+        // 等 App 把字貼進去再按 Enter，太快會送出空白：讀得到輸入框就等到字變了（最多 0.6 秒），讀不到就照舊等 0.15 秒
         if enter {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                for down in [true, false] { CGEvent(keyboardEventSource: src, virtualKey: 36, keyDown: down)?.post(tap: .cghidEventTap) }   // 36 = Return
+            var waited = 0.0
+            func send() {
+                if let f = field, before != nil, Learner.value(f) == before, waited < 0.6 {
+                    waited += 0.05; DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: send); return
+                }
+                key(36)   // 36 = Return
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + (before == nil ? 0.15 : 0.05), execute: send)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        // 終端機讀剪貼簿比較慢，太早還原會貼出舊的內容
+        let slow = terminals.contains(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "")
+        DispatchQueue.main.asyncAfter(deadline: .now() + (slow ? 1.0 : 0.6)) {
             guard !keep, pending?.mine == mine else { return }   // 後面又貼了一次，交給那次還原
             pending = nil
             guard pb.changeCount == mine, !saved.isEmpty else { return }
             pb.clearContents(); pb.writeObjects(saved)
+        }
+    }
+
+    static let terminals: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "com.github.wez.wezterm", "dev.warp.Warp-Stable",
+                                         "com.mitchellh.ghostty", "net.kovidgoyal.kitty", "io.alacritty"]
+
+    private static func key(_ code: CGKeyCode, flags: CGEventFlags = []) {
+        let src = CGEventSource(stateID: .combinedSessionState)
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
+            e?.flags = flags
+            e?.setIntegerValueField(.eventSourceUserData, value: Hotkey.mark)
+            e?.post(tap: .cghidEventTap)
+        }
+    }
+
+    /// 目前鍵盤配置下打出「v」的那個鍵；Dvorak 這類配置不是 9。注音、拼音這些輸入法底下的配置是 ABC，一樣是 9
+    static var vKey: CGKeyCode {
+        guard let src = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let p = TISGetInputSourceProperty(src, kTISPropertyUnicodeKeyLayoutData) else { return 9 }
+        let data = Unmanaged<CFData>.fromOpaque(p).takeUnretainedValue() as Data
+        return data.withUnsafeBytes { raw -> CGKeyCode in
+            guard let layout = raw.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return 9 }
+            for code in 0..<CGKeyCode(128) {
+                var dead: UInt32 = 0, len = 0, chars = [UniChar](repeating: 0, count: 4)
+                let st = UCKeyTranslate(layout, code, UInt16(kUCKeyActionDown), 0, UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysBit),
+                                        &dead, 4, &len, &chars)
+                if st == noErr, len == 1, chars[0] == UniChar(UInt8(ascii: "v")) { return code }
+            }
+            return 9
         }
     }
 }

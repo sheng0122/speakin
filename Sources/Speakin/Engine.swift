@@ -1,7 +1,7 @@
 import AppKit
 import AVFoundation
 
-/// 主流程：Fn → 錄音（邊講邊切段送 Breeze）→ Fn → 字典替換 → Haiku 潤稿 → 貼上 → 15 秒後學習
+/// 主流程：Fn → 錄音（邊講邊切段送本機辨識 TEA-ASR）→ Fn → 字典替換 → Haiku 潤稿 → 貼上 → 15 秒後學習
 @MainActor final class Speakin: ObservableObject {
     static let shared = Speakin()
     enum State { case idle, recording, processing }
@@ -65,6 +65,14 @@ import AVFoundation
         lastText = store.history.last(where: { !$0.text.isEmpty })?.text ?? ""
         rec.onSamples = { [weak self] s in DispatchQueue.main.async { self?.feed(s) } }
         rec.onChange = { [weak self] in MainActor.assumeIsolated { self?.micChanged() } }
+        // 睡覺時關麥克風，醒來再照設定開
+        let ws = NSWorkspace.shared.notificationCenter
+        ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { if let self, self.state == .idle { self.rec.stop() } }
+        }
+        ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyMic() }
+        }
         applyMic()
         // 啟動 10 秒後查一次新版，之後每 6 小時
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in Task { await self?.checkUpdate() } }
@@ -87,7 +95,10 @@ import AVFoundation
         guard state == .idle else { return }
         if rec.running { rec.stop() }
         ring = []
-        if store.settings.micAlwaysOn { try? rec.start(mic: store.settings.mic, avoidBluetooth: store.settings.avoidBluetooth) }
+        // 藍牙耳機一直開著麥克風會卡在通話模式（音樂整天變糊），這時候不常開，按下才開
+        let s = store.settings
+        guard s.micAlwaysOn, !(SystemAudio.pick(mic: s.mic, avoidBluetooth: s.avoidBluetooth).map(SystemAudio.isBluetooth) ?? false) else { return }
+        try? rec.start(mic: s.mic, avoidBluetooth: s.avoidBluetooth)
     }
 
     /// 系統因為裝置變動把麥克風停了：沒在錄就照設定重開，錄到一半就接著錄（已切好的段落不動）
@@ -227,16 +238,25 @@ import AVFoundation
             let before = await prevRaw?.value ?? screen
             guard my == self.gen else { return "" }
             let prompt = terms + " " + String(before.suffix(40)), t = Date()
-            do {
-                var text = try await self.asr.transcribe(piece, prompt: prompt)
-                if last, text.allSatisfy({ "嗯啊呃喔。，、 ".contains($0) }) { text = "" }   // 句尾沒講話時辨識會吐「嗯」
-                self.log.line(String(format: "段%d 辨識 %.2f 秒｜提示：%@｜結果：%@", n, Date().timeIntervalSince(t), prompt, text)
-                              + (self.asr.stripped > 0 ? "｜清掉怪字元 \(self.asr.stripped) 個" : ""))
-                return text
-            } catch {
-                self.log.line("段\(n) 辨識失敗：\(error.localizedDescription)")
-                self.asrError = error.localizedDescription; return ""
+            var text: String
+            do { text = try await self.asr.transcribe(piece, prompt: prompt) } catch {
+                // 失敗或卡在重複時，不帶提示再跑一次：提示常是卡住的原因，第二次多半就好了
+                self.log.line("段\(n) 辨識失敗：\(error.localizedDescription)，不帶提示再試一次")
+                do { text = try await self.asr.transcribe(piece, prompt: "") } catch {
+                    self.log.line("段\(n) 再試還是失敗：\(error.localizedDescription)")
+                    self.asrError = error.localizedDescription; return ""
+                }
             }
+            if TextFix.looping(text) {
+                let again = (try? await self.asr.transcribe(piece, prompt: "")) ?? ""
+                self.log.line("段\(n) 辨識卡在重複：\(text)｜不帶提示重跑：\(again)")
+                text = TextFix.looping(again) || again.isEmpty ? TextFix.unloop(text) : again
+            }
+            guard my == self.gen else { return "" }
+            if last, text.allSatisfy({ "嗯啊呃喔。，、 ".contains($0) }) { text = "" }   // 句尾沒講話時辨識會吐「嗯」
+            self.log.line(String(format: "段%d 辨識 %.2f 秒｜提示：%@｜結果：%@", n, Date().timeIntervalSince(t), prompt, text)
+                          + (self.asr.stripped > 0 ? "｜清掉怪字元 \(self.asr.stripped) 個" : ""))
+            return text
         }
         pieces.append(raw)
     }
