@@ -49,6 +49,16 @@ enum TextFix {
         return out as String
     }
 
+    /// 辨識卡住一直重複同一小段（「好的好的好的好的」「我們我們我們我們」）：2～8 個字連續出現 4 次以上
+    static let loop = try! NSRegularExpression(pattern: "(.{2,8}?)\\1{3,}")
+    static func looping(_ s: String) -> Bool {
+        loop.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)) != nil
+    }
+    /// 重複的只留一次
+    static func unloop(_ s: String) -> String {
+        loop.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: (s as NSString).length), withTemplate: "$1")
+    }
+
     static let junk = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).union(.symbols)
 
     /// 比對貼上的文字和使用者改過的文字，回傳每一處「原本 → 改成」。
