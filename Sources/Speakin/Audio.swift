@@ -79,11 +79,20 @@ final class Recorder {
     private let outFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
     private var converter: AVAudioConverter?
     var onSamples: (([Float]) -> Void)?   // 在音訊執行緒呼叫
-    private(set) var running = false
+    var onChange: (() -> Void)?           // 裝置變了（AirPods 連上、換麥克風、睡醒），系統會自己把 engine 停掉；在主執行緒呼叫
+    /// 看 engine 真的有沒有在跑：被系統停掉時自己記的旗標還是 true，就再也不會重開（#1）
+    var running: Bool { engine.isRunning }
+
+    init() {
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            self?.onChange?()
+        }
+    }
 
     /// mic：麥克風 UID；沒選或那支被拔掉就用系統預設
     func start(mic: String? = nil, avoidBluetooth: Bool = false) throws {
         let input = engine.inputNode
+        input.removeTap(onBus: 0)   // 被系統停掉時舊的 tap 還在，再裝一次會當掉
         // 每次都設，從指定麥克風改回「跟系統設定」時才會換回來
         if var id = SystemAudio.pick(mic: mic, avoidBluetooth: avoidBluetooth), let au = input.audioUnit {
             AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size))
@@ -92,13 +101,11 @@ final class Recorder {
         converter = AVAudioConverter(from: inFmt, to: outFmt)
         input.installTap(onBus: 0, bufferSize: 4096, format: inFmt) { [weak self] buf, _ in self?.convert(buf) }
         do { try engine.start() } catch { input.removeTap(onBus: 0); throw error }
-        running = true
     }
 
     func stop() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        running = false
     }
 
     private func convert(_ buf: AVAudioPCMBuffer) {
