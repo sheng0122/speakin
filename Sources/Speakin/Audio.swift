@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreAudio
+import IOKit
 
 /// 系統輸出的靜音開關（錄音時把其他聲音關掉）；有些輸出裝置不支援靜音，那就什麼都不做
 enum SystemAudio {
@@ -41,8 +42,16 @@ enum SystemAudio {
         return v
     }
     static func isBluetooth(_ id: AudioDeviceID) -> Bool { [kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE].contains(transport(id)) }
+    /// 內建麥克風；螢幕蓋著（接外接螢幕）時內建麥克風收不到聲音，當作沒有
     static var builtInInput: AudioDeviceID? {
-        inputs.lazy.compactMap { device(uid: $0.uid) }.first { transport($0) == kAudioDeviceTransportTypeBuiltIn }
+        if lidClosed { return nil }
+        return inputs.lazy.compactMap { device(uid: $0.uid) }.first { transport($0) == kAudioDeviceTransportTypeBuiltIn }
+    }
+
+    static var lidClosed: Bool {
+        let root = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        defer { IOObjectRelease(root) }
+        return (IORegistryEntryCreateCFProperty(root, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Bool) ?? false
     }
 
     /// 這次要用哪支麥克風：指定的（沒接就跟系統）；跟系統時遇到藍牙耳機改用內建的
@@ -61,14 +70,17 @@ enum SystemAudio {
         return ok == noErr && id != 0 ? id : nil
     }
 
+    private static var mutedDevice: AudioObjectID?   // 我們靜音的是哪個輸出；錄音中換了輸出裝置，還原時才不會還原錯的那個
     static var muted: Bool {
         get {
             var v = UInt32(0), size = UInt32(MemoryLayout<UInt32>.size), a = addr(kAudioDevicePropertyMute, kAudioDevicePropertyScopeOutput)
             return AudioObjectGetPropertyData(output, &a, 0, nil, &size, &v) == noErr && v == 1
         }
         set {
+            let dev = newValue ? output : mutedDevice ?? output
+            mutedDevice = newValue ? dev : nil
             var v = UInt32(newValue ? 1 : 0), a = addr(kAudioDevicePropertyMute, kAudioDevicePropertyScopeOutput)
-            AudioObjectSetPropertyData(output, &a, 0, nil, UInt32(MemoryLayout<UInt32>.size), &v)
+            AudioObjectSetPropertyData(dev, &a, 0, nil, UInt32(MemoryLayout<UInt32>.size), &v)
         }
     }
 }
@@ -78,6 +90,7 @@ final class Recorder {
     private let engine = AVAudioEngine()
     private let outFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
     private var converter: AVAudioConverter?
+    private var mono: AVAudioFormat?
     var onSamples: (([Float]) -> Void)?   // 在音訊執行緒呼叫
     var onChange: (() -> Void)?           // 裝置變了（AirPods 連上、換麥克風、睡醒），系統會自己把 engine 停掉；在主執行緒呼叫
     /// 看 engine 真的有沒有在跑：被系統停掉時自己記的旗標還是 true，就再也不會重開（#1）
@@ -98,7 +111,9 @@ final class Recorder {
             AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size))
         }
         let inFmt = input.outputFormat(forBus: 0)
-        converter = AVAudioConverter(from: inFmt, to: outFmt)
+        // 只拿第一個聲道再轉：多聲道錄音介面（6 聲道這種）直接丟給 converter 可能整段變成 0
+        mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: inFmt.sampleRate, channels: 1, interleaved: false)
+        converter = mono.flatMap { AVAudioConverter(from: $0, to: outFmt) }
         input.installTap(onBus: 0, bufferSize: 4096, format: inFmt) { [weak self] buf, _ in self?.convert(buf) }
         do { try engine.start() } catch { input.removeTap(onBus: 0); throw error }
     }
@@ -108,8 +123,11 @@ final class Recorder {
         engine.stop()
     }
 
-    private func convert(_ buf: AVAudioPCMBuffer) {
-        guard let conv = converter else { return }
+    private func convert(_ multi: AVAudioPCMBuffer) {
+        guard let conv = converter, let mono, let src = multi.floatChannelData?[0],
+              let buf = AVAudioPCMBuffer(pcmFormat: mono, frameCapacity: multi.frameLength), let dst = buf.floatChannelData?[0] else { return }
+        buf.frameLength = multi.frameLength
+        dst.update(from: src, count: Int(multi.frameLength))
         let cap = AVAudioFrameCount(Double(buf.frameLength) * 16000 / buf.format.sampleRate) + 64
         guard let out = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: cap) else { return }
         var fed = false
@@ -151,13 +169,22 @@ struct Segmenter {
             silent = loud ? 0 : silent + Self.frame
             scanned += Self.frame
             if scanned >= minLen && silent >= gap { cut = scanned - silent / 2 }
-            else if scanned >= maxLen { cut = scanned }
+            else if scanned >= maxLen { cut = quietest() }
         }
         guard let c = cut else { return nil }
         let seg = Array(buf[..<c])
         buf.removeFirst(c); scanned -= c; silent = min(silent, scanned)
         if levels.count > 2000 { levels.removeFirst(levels.count - 2000) }
         return seg
+    }
+
+    /// 一直沒停頓要硬切時，在最後 3 秒裡找最安靜的 0.2 秒，從中間切，比較不會把一個字切成兩半
+    private func quietest() -> Int {
+        let n = 7, look = min(100, scanned / Self.frame, levels.count)   // 7 格 ≈ 0.2 秒，100 格 = 3 秒
+        guard look >= n else { return scanned }
+        let recent = Array(levels.suffix(look))
+        let best = (0...(look - n)).min { recent[$0..<$0 + n].reduce(0, +) < recent[$1..<$1 + n].reduce(0, +) } ?? 0
+        return scanned - (look - best - n / 2) * Self.frame
     }
 
     mutating func flush() -> [Float] {
