@@ -64,6 +64,7 @@ import AVFoundation
         hotkey.onPasteLast = { [weak self] in MainActor.assumeIsolated { self?.pasteLast() } }
         lastText = store.history.last(where: { !$0.text.isEmpty })?.text ?? ""
         rec.onSamples = { [weak self] s in DispatchQueue.main.async { self?.feed(s) } }
+        rec.onChange = { [weak self] in MainActor.assumeIsolated { self?.micChanged() } }
         applyMic()
         // 啟動 10 秒後查一次新版，之後每 6 小時
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in Task { await self?.checkUpdate() } }
@@ -87,6 +88,20 @@ import AVFoundation
         if rec.running { rec.stop() }
         ring = []
         if store.settings.micAlwaysOn { try? rec.start(mic: store.settings.mic, avoidBluetooth: store.settings.avoidBluetooth) }
+    }
+
+    /// 系統因為裝置變動把麥克風停了：沒在錄就照設定重開，錄到一半就接著錄（已切好的段落不動）
+    private func micChanged() {
+        guard !rec.running else { return }
+        switch state {
+        case .idle: applyMic()
+        case .recording:
+            log.line("麥克風裝置變了，重開接著錄")
+            do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth) } catch {
+                log.line("麥克風重開失敗：\(error.localizedDescription)"); cancel(quiet: true); fail("麥克風斷了")
+            }
+        case .processing: break
+        }
     }
 
     private func stopMic() { if !store.settings.micAlwaysOn { rec.stop() } }
@@ -284,18 +299,21 @@ import AVFoundation
         return (raw, TextFix.space(TextFix.joinParts(parts.indices.map { done[$0] ?? parts[$0] })))
     }
 
+    /// 模型回來的字：拿掉【游標】和抄回來的標籤（#5）
+    nonisolated static func tidy(_ s: String) -> String {
+        Polisher.stripTags(s.replacingOccurrences(of: "【游標】", with: "")).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// 潤一塊；沒回應或不可信就用這塊的原文，不拖累其他塊
     private func polishPart(_ text: String, n: Int, of total: Int, with p: Polisher) async -> String {
         let t = Date(), m = runSettings.model
         // 前一塊逾時被關掉的幫手，重開要等十幾秒，不如直接用原文
         if n > 0, m != "qwen", !p.alive { log.line("潤稿 第\(n + 1)/\(total)塊｜程式已關，用原文"); failedParts += 1; return text }
         var out = await (m == "qwen" ? local.polish(text, app: app, context: context, terms: store.polishTerms(for: text))
-                                     : p.polish(text, app: app, context: n == 0 ? context : "", screen: screen, terms: store.polishTerms(for: text), model: m))?
-            .replacingOccurrences(of: "【游標】", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                                     : p.polish(text, app: app, context: n == 0 ? context : "", screen: screen, terms: store.polishTerms(for: text), model: m)).map(Self.tidy)
         var ok = out.map { TextFix.plausible(text, $0) } ?? false
         // 有回但改太多（摘要、漏句）再問一次，常常第二次就對
-        if out != nil, !ok, m != "qwen", let again = await p.polish(text, app: app, context: "", terms: store.polishTerms(for: text), model: m)?
-            .replacingOccurrences(of: "【游標】", with: "").trimmingCharacters(in: .whitespacesAndNewlines), TextFix.plausible(text, again) {
+        if out != nil, !ok, m != "qwen", let again = await p.polish(text, app: app, context: "", terms: store.polishTerms(for: text), model: m).map(Self.tidy), TextFix.plausible(text, again) {
             log.line("潤稿 第\(n + 1)/\(total)塊 第一次不可信，重問一次可信")
             out = again; ok = true
         }

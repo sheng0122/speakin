@@ -133,20 +133,28 @@ private func hotkeyCallback(_: CGEventTapProxy, type: CGEventType, event: CGEven
 
 /// 貼上：放進剪貼簿 → 模擬 Cmd+V → 0.6 秒後把原本的剪貼簿還回去
 enum Paster {
+    /// 還沒還原的那次：剪貼簿現在放的是我們貼的字（mine），使用者原本的內容在 saved
+    private static var pending: (saved: [NSPasteboardItem], mine: Int)?
+
     /// keep = true：結果留在剪貼簿，不還原原本複製的東西
     /// enter = true：貼完再按一下 Enter 送出
     static func paste(_ text: String, keep: Bool = false, enter: Bool = false) {
         let pb = NSPasteboard.general
-        let saved = (pb.pasteboardItems ?? []).map { item -> NSPasteboardItem in
-            let copy = NSPasteboardItem()
-            for t in item.types { if let d = item.data(forType: t) { copy.setData(d, forType: t) } }
-            return copy
+        // 上一次還沒還原就又貼：剪貼簿裡是上一句，不是使用者的東西，沿用上一次存的（#2）
+        let saved: [NSPasteboardItem]
+        if let p = pending, p.mine == pb.changeCount { saved = p.saved } else {
+            saved = (pb.pasteboardItems ?? []).map { item -> NSPasteboardItem in
+                let copy = NSPasteboardItem()
+                for t in item.types { if let d = item.data(forType: t) { copy.setData(d, forType: t) } }
+                return copy
+            }
         }
         pb.clearContents()
         pb.setString(text, forType: .string)
         // 標成暫時的，Raycast、Paste 這類剪貼簿紀錄就不會存這筆
         if !keep { pb.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType")) }
         let mine = pb.changeCount
+        pending = keep ? nil : (saved, mine)
         let src = CGEventSource(stateID: .combinedSessionState)
         for down in [true, false] {
             let e = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: down)   // 9 = V
@@ -160,7 +168,9 @@ enum Paster {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            guard !keep, pb.changeCount == mine, !saved.isEmpty else { return }
+            guard !keep, pending?.mine == mine else { return }   // 後面又貼了一次，交給那次還原
+            pending = nil
+            guard pb.changeCount == mine, !saved.isEmpty else { return }
             pb.clearContents(); pb.writeObjects(saved)
         }
     }
