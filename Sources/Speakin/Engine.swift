@@ -114,7 +114,7 @@ import AVFoundation
             log.line("麥克風裝置變了，重開接著錄")
             lastSamples = Date()
             do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth) } catch {
-                log.line("麥克風重開失敗：\(error.localizedDescription)"); cancel(quiet: true); fail("麥克風斷了")
+                log.line("麥克風重開失敗：\(error.localizedDescription)，等看門狗再試")
             }
         case .processing: break
         }
@@ -123,17 +123,15 @@ import AVFoundation
     /// 看門狗：AirPods 連上切通話模式時，engine 說自己在跑、卻一直沒有聲音送進來，也不會發通知。
     /// 開著超過 1.5 秒沒收到聲音就重開；錄音中重開不影響已經切好的段落（2026-11-07 實測：錄 10 秒只收到按下前那 0.45 秒）
     private func watchMic() {
-        guard rec.running, state != .processing, Date().timeIntervalSince(lastSamples) > 1.5 else { return }
+        guard state != .processing, state == .recording || rec.running, Date().timeIntervalSince(lastSamples) > 1.5 else { return }
         lastSamples = Date()   // 重開後給 1.5 秒暖機，不要一直重開
-        if state == .recording {
-            stalls += 1
-            if stalls > 3 { log.line("麥克風重開 3 次都沒有聲音，停止"); cancel(quiet: true); return fail("麥克風沒收到聲音") }
-            log.line("麥克風（\(rec.deviceName)）1.5 秒沒有聲音進來，重開")
-            rec.stop()
-            do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth); log.line("改用：\(rec.deviceName)") } catch {
-                log.line("麥克風重開失敗：\(error.localizedDescription)"); cancel(quiet: true); fail("麥克風斷了")
-            }
-        } else { rec.stop(); applyMic() }
+        guard state == .recording else { rec.stop(); return applyMic() }
+        stalls += 1
+        if stalls > 3 { log.line("麥克風重開 3 次都沒有聲音，停止"); cancel(quiet: true); return fail("麥克風沒收到聲音") }
+        log.line("麥克風（\(rec.deviceName)）1.5 秒沒有聲音進來，重開")
+        // 開不起來（藍牙切換到一半）也不放棄，下一秒再試
+        do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth); log.line("改用：\(rec.deviceName)") }
+        catch { log.line("麥克風重開失敗：\(error.localizedDescription)") }
     }
 
     private func stopMic() { if !store.settings.micAlwaysOn { rec.stop() } }
