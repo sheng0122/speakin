@@ -61,6 +61,12 @@ enum SystemAudio {
         return avoidBluetooth && isBluetooth(d) ? builtInInput ?? d : d
     }
 
+    static func name(_ id: AudioDeviceID) -> String {
+        var a = addr(kAudioObjectPropertyName), v: Unmanaged<CFString>?, sz = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(id, &a, 0, nil, &sz, &v) == noErr, let v else { return "?" }
+        return v.takeRetainedValue() as String
+    }
+
     static func device(uid: String) -> AudioDeviceID? {
         var a = addr(kAudioHardwarePropertyTranslateUIDToDevice), id = AudioDeviceID(0), size = UInt32(MemoryLayout<AudioDeviceID>.size)
         var cf = uid as CFString
@@ -95,6 +101,7 @@ final class Recorder {
     var onChange: (() -> Void)?           // 裝置變了（AirPods 連上、換麥克風、睡醒），系統會自己把 engine 停掉；在主執行緒呼叫
     /// 看 engine 真的有沒有在跑：被系統停掉時自己記的旗標還是 true，就再也不會重開（#1）
     var running: Bool { engine.isRunning }
+    private(set) var deviceName = ""   // 這次開的是哪支麥克風，寫進紀錄
 
     init() {
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
@@ -108,6 +115,7 @@ final class Recorder {
         input.removeTap(onBus: 0)   // 被系統停掉時舊的 tap 還在，再裝一次會當掉
         // 每次都設，從指定麥克風改回「跟系統設定」時才會換回來
         if var id = SystemAudio.pick(mic: mic, avoidBluetooth: avoidBluetooth), let au = input.audioUnit {
+            deviceName = SystemAudio.name(id)
             AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size))
         }
         let inFmt = input.outputFormat(forBus: 0)
