@@ -39,6 +39,8 @@ import AVFoundation
     private var iMuted = false            // 是 Speakin 把系統靜音的，結束時只還原自己關的
     private var silentSamples = 0         // 連續幾乎沒訊號的取樣數，麥克風壞掉或被拔掉時自動停
     private var lastTap = Date.distantPast
+    private var lastSamples = Date()      // 上次收到聲音；麥克風開著卻一直沒聲音進來 = 卡住了
+    private var stalls = 0                // 這次錄音看門狗重開了幾次都沒救回來
     private var ring: [Float] = []        // 麥克風常開時，按下前最近 0.45 秒的聲音
     private var ending = false            // 放開後多收 0.25 秒尾音中
     static let maxSeconds: Double = 600   // 單次錄音上限 10 分鐘，最後 1 分鐘膠囊的秒數變橘色
@@ -65,6 +67,7 @@ import AVFoundation
         lastText = store.history.last(where: { !$0.text.isEmpty })?.text ?? ""
         rec.onSamples = { [weak self] s in DispatchQueue.main.async { self?.feed(s) } }
         rec.onChange = { [weak self] in MainActor.assumeIsolated { self?.micChanged() } }
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.watchMic() } }
         // 睡覺時關麥克風，醒來再照設定開
         let ws = NSWorkspace.shared.notificationCenter
         ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -99,6 +102,7 @@ import AVFoundation
         let s = store.settings
         guard s.micAlwaysOn, !(SystemAudio.pick(mic: s.mic, avoidBluetooth: s.avoidBluetooth).map(SystemAudio.isBluetooth) ?? false) else { return }
         try? rec.start(mic: s.mic, avoidBluetooth: s.avoidBluetooth)
+        lastSamples = Date()
     }
 
     /// 系統因為裝置變動把麥克風停了：沒在錄就照設定重開，錄到一半就接著錄（已切好的段落不動）
@@ -108,11 +112,28 @@ import AVFoundation
         case .idle: applyMic()
         case .recording:
             log.line("麥克風裝置變了，重開接著錄")
+            lastSamples = Date()
             do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth) } catch {
                 log.line("麥克風重開失敗：\(error.localizedDescription)"); cancel(quiet: true); fail("麥克風斷了")
             }
         case .processing: break
         }
+    }
+
+    /// 看門狗：AirPods 連上切通話模式時，engine 說自己在跑、卻一直沒有聲音送進來，也不會發通知。
+    /// 開著超過 1.5 秒沒收到聲音就重開；錄音中重開不影響已經切好的段落（2026-11-07 實測：錄 10 秒只收到按下前那 0.45 秒）
+    private func watchMic() {
+        guard rec.running, state != .processing, Date().timeIntervalSince(lastSamples) > 1.5 else { return }
+        lastSamples = Date()   // 重開後給 1.5 秒暖機，不要一直重開
+        if state == .recording {
+            stalls += 1
+            if stalls > 3 { log.line("麥克風重開 3 次都沒有聲音，停止"); cancel(quiet: true); return fail("麥克風沒收到聲音") }
+            log.line("麥克風（\(rec.deviceName)）1.5 秒沒有聲音進來，重開")
+            rec.stop()
+            do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth); log.line("改用：\(rec.deviceName)") } catch {
+                log.line("麥克風重開失敗：\(error.localizedDescription)"); cancel(quiet: true); fail("麥克風斷了")
+            }
+        } else { rec.stop(); applyMic() }
     }
 
     private func stopMic() { if !store.settings.micAlwaysOn { rec.stop() } }
@@ -181,6 +202,8 @@ import AVFoundation
         do { try asr.ensureRunning(model: runSettings.asrModel) } catch { return fail(error.localizedDescription) }
         reset()
         log.start("開始｜App：\(app)｜潤稿：\(runSettings.polish ? runSettings.model : "關")｜畫面前文：\(context)")
+        // 常開的麥克風卡住了（engine 在跑但沒聲音）：按下時就重開，不要等看門狗、白白少錄 1.5 秒
+        if rec.running, Date().timeIntervalSince(lastSamples) > 0.5 { log.line("常開的麥克風（\(rec.deviceName)）沒有聲音進來，重開"); rec.stop(); ring = [] }
         if rec.running, !ring.isEmpty {   // 麥克風常開：把按下前那一小段接上，句首不會被吃掉
             log.line(String(format: "接上按下前 %.2f 秒", Double(ring.count) / 16000))
             if let piece = seg.push(ring) { enqueue(piece) }
@@ -188,7 +211,9 @@ import AVFoundation
         ring = []
         if !rec.running {
             do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth) } catch { log.line("麥克風打不開：\(error.localizedDescription)"); return fail("麥克風打不開") }
+            lastSamples = Date()
         }
+        log.line("麥克風：\(rec.deviceName)")
         started = Date()
         message = nil
         play(.start)
@@ -204,6 +229,7 @@ import AVFoundation
     }
 
     private func feed(_ s: [Float]) {
+        lastSamples = Date(); stalls = 0
         guard state == .recording else {
             if state == .idle, rec.running { ring += s; if ring.count > 7200 { ring.removeFirst(ring.count - 7200) } }
             return
