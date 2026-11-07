@@ -93,7 +93,7 @@ enum SystemAudio {
 
 /// 麥克風 → 16 kHz 單聲道 Float
 final class Recorder {
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private let outFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
     private var converter: AVAudioConverter?
     private var mono: AVAudioFormat?
@@ -104,21 +104,28 @@ final class Recorder {
     private(set) var deviceName = ""   // 這次開的是哪支麥克風，寫進紀錄
 
     init() {
-        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
-            self?.onChange?()
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] n in
+            guard let self, (n.object as? AVAudioEngine) === self.engine else { return }
+            self.onChange?()
         }
     }
 
     /// mic：麥克風 UID；沒選或那支被拔掉就用系統預設
     func start(mic: String? = nil, avoidBluetooth: Bool = false) throws {
+        stop()
+        // 每次換一個新的 engine：綁過某支麥克風的 engine 會一直綁著，改回「跟系統設定」時換不回來
+        engine = AVAudioEngine()
         let input = engine.inputNode
-        input.removeTap(onBus: 0)   // 被系統停掉時舊的 tap 還在，再裝一次會當掉
-        // 每次都設，從指定麥克風改回「跟系統設定」時才會換回來
-        if var id = SystemAudio.pick(mic: mic, avoidBluetooth: avoidBluetooth), let au = input.audioUnit {
-            deviceName = SystemAudio.name(id)
+        let want = SystemAudio.pick(mic: mic, avoidBluetooth: avoidBluetooth), def = SystemAudio.defaultInput
+        deviceName = (want ?? def).map(SystemAudio.name) ?? "?"
+        // 就是系統預設那支就不要指定：直接綁藍牙麥克風（AirPods）會開不起來或一直沒聲音，
+        // 跟著系統預設走才正常（2026-11-07 實測：綁定 3 秒收到 0 秒，不綁 2.9 秒）。只有要用別支時才綁
+        if var id = want, id != def, let au = input.audioUnit {
             AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size))
         }
         let inFmt = input.outputFormat(forBus: 0)
+        // 裝置切換到一半時格式會是 0 Hz／0 聲道，拿去裝 tap 會直接當掉；先回報失敗，看門狗等一下會再試
+        guard inFmt.sampleRate > 0, inFmt.channelCount > 0 else { throw Err("麥克風還沒準備好") }
         // 只拿第一個聲道再轉：多聲道錄音介面（6 聲道這種）直接丟給 converter 可能整段變成 0
         mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: inFmt.sampleRate, channels: 1, interleaved: false)
         converter = mono.flatMap { AVAudioConverter(from: $0, to: outFmt) }
