@@ -28,6 +28,8 @@ import AVFoundation
     private var seg = Segmenter()
     private var gen = 0                                   // 第幾次錄音；取消或重錄後，舊的工作自動放棄
     private var pieces: [Task<String, Never>] = []        // 每段辨識結果
+    private var early: [String: Task<String?, Never>] = [:]   // 邊講邊潤：已經講完的塊先送去潤，用塊的文字當 key，放開後切出一樣的塊就直接拿
+    private var queue: [ObjectIdentifier: Task<String?, Never>] = [:], queued: [ObjectIdentifier: Int] = [:]   // 每個潤稿程式一次只能問一題，排隊
     private var failedParts = 0, totalParts = 0              // 幾塊潤稿不可信、總共幾塊
     private var polishFailed: Bool { failedParts > 0 }
     private var segCount = 0
@@ -224,7 +226,7 @@ import AVFoundation
 
     private func reset() {
         gen += 1
-        seg = Segmenter(); pieces = []; failedParts = 0; totalParts = 0; segCount = 0; ending = false
+        seg = Segmenter(); pieces = []; early = [:]; queue = [:]; queued = [:]; failedParts = 0; totalParts = 0; segCount = 0; ending = false
         if runSettings.polish { preparePolish(runSettings.model) }
     }
 
@@ -285,6 +287,40 @@ import AVFoundation
             return text
         }
         pieces.append(raw)
+        Task { _ = await raw.value; await self.polishEarly(my) }
+    }
+
+    /// 字典替換、刪掉收回的話：放開後和邊講邊潤要用同一套，切出來的塊才會一樣
+    private func fixed(_ raws: [String]) -> (raw: String, fixed: String) {
+        let raw = raws.filter { !$0.isEmpty }.reduce("", Self.join)
+        return (raw, TextFix.dropRetracted(TextFix.applyDict(raw, store.dict)))
+    }
+
+    /// 每辨識完一段，把目前的字切塊，除了最後一塊（還在講）都先送去潤。
+    /// 後面的話改變了前面的塊（收回、字典），放開後切出來的字不一樣就對不到，那塊重潤，結果一樣正確
+    private func polishEarly(_ my: Int) async {
+        guard my == gen, runSettings.polish, runSettings.model != "qwen", !helpers.isEmpty else { return }
+        var raws: [String] = []
+        for p in pieces { raws.append(await p.value) }
+        guard my == gen else { return }
+        let parts = TextFix.chunks(fixed(raws).fixed)
+        for (i, t) in parts.dropLast().enumerated() where early[t] == nil { early[t] = schedule(t, n: i, total: 0) }
+    }
+
+    /// 排給目前最閒的潤稿程式；同一個程式照順序一題一題問
+    private func schedule(_ text: String, n: Int, total: Int) -> Task<String?, Never> {
+        let workers = [polisher] + helpers, my = gen
+        let w = workers.min { queued[ObjectIdentifier($0), default: 0] < queued[ObjectIdentifier($1), default: 0] }!, id = ObjectIdentifier(w)
+        let prev = queue[id]
+        queued[id, default: 0] += 1
+        let t = Task { @MainActor () -> String? in
+            _ = await prev?.value
+            defer { if my == self.gen { self.queued[id, default: 1] -= 1 } }
+            guard my == self.gen else { return nil }
+            return await self.polishPart(text, n: n, of: total, with: w)
+        }
+        queue[id] = t
+        return t
     }
 
     /// 錄音過 20 秒，長文很可能要分塊，先多暖機 2 個 claude（暖機要幾秒，等按結束才開會來不及）
@@ -321,8 +357,7 @@ import AVFoundation
     private func collect() async -> (raw: String, text: String) {
         var raws: [String] = []
         for p in pieces { raws.append(await p.value) }
-        let raw = raws.filter { !$0.isEmpty }.reduce("", Self.join)
-        let fixed = TextFix.dropRetracted(TextFix.applyDict(raw, store.dict))
+        let (raw, fixed) = fixed(raws)
         defer { helpers.forEach { $0.kill() }; helpers = []; tidier?.kill(); tidier = nil }
         guard runSettings.polish, !fixed.isEmpty else { return (raw, TextFix.space(fixed)) }
         // 不到 10 個字跳過潤稿：251 筆紀錄裡這種長度 93% 只改了標點，卻要多等約 1 秒
@@ -331,21 +366,18 @@ import AVFoundation
         if !spokenEmail, fixed.filter({ $0.isLetter || $0.isNumber }).count < 10 { log.line("短句，不潤稿"); return (raw, TextFix.question(TextFix.space(fixed))) }
         let parts = runSettings.model == "qwen" ? [fixed] : TextFix.chunks(fixed)
         totalParts = parts.count
-        let workers = [polisher] + helpers
-        // 每個程式照順序處理分到的塊（同一個程式一次只能問一題），不同程式同時跑
-        let done = await withTaskGroup(of: [(Int, String)].self) { g in
-            for (w, p) in workers.enumerated() {
-                let mine = parts.indices.filter { $0 % workers.count == w }
-                guard !mine.isEmpty else { continue }
-                g.addTask { @MainActor in
-                    var r: [(Int, String)] = []
-                    for i in mine { r.append((i, await self.polishPart(parts[i], n: i, of: parts.count, with: p))) }
-                    return r
-                }
-            }
-            return await g.reduce(into: [Int: String]()) { acc, r in for (i, t) in r { acc[i] = t } }
+        let hits = parts.filter { early[$0] != nil }.count
+        if hits > 0 { log.line("邊講邊潤：\(parts.count) 塊裡 \(hits) 塊講話時已經送出") }
+        let tasks = parts.enumerated().map { i, t in
+            let task = early[t] ?? schedule(t, n: i, total: parts.count)
+            early[t] = task   // 最後一段辨識完的 polishEarly 可能晚一步才跑，登記起來才不會同一塊潤兩次
+            return task
         }
-        let joined = TextFix.joinParts(parts.indices.map { done[$0] ?? parts[$0] })
+        var done: [String] = []
+        for (i, t) in tasks.enumerated() {
+            if let good = await t.value { done.append(good) } else { failedParts += 1; done.append(parts[i]) }
+        }
+        let joined = TextFix.joinParts(done)
         guard parts.count > 1, let t = tidier else { return (raw, TextFix.space(joined)) }
         return (raw, TextFix.space(await tidy(joined, with: t)))
     }
@@ -366,11 +398,11 @@ import AVFoundation
         Polisher.stripTags(s.replacingOccurrences(of: "【游標】", with: "")).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 潤一塊；沒回應或不可信就用這塊的原文，不拖累其他塊
-    private func polishPart(_ text: String, n: Int, of total: Int, with p: Polisher) async -> String {
+    /// 潤一塊；沒回應或不可信回 nil，呼叫的地方用這塊的原文，不拖累其他塊
+    private func polishPart(_ text: String, n: Int, of total: Int, with p: Polisher) async -> String? {
         let t = Date(), m = runSettings.model
         // 前一塊逾時被關掉的幫手，重開要等十幾秒，不如直接用原文
-        if n > 0, m != "qwen", !p.alive { log.line("潤稿 第\(n + 1)/\(total)塊｜程式已關，用原文"); failedParts += 1; return text }
+        if n > 0, m != "qwen", !p.alive { log.line("潤稿 第\(n + 1)塊｜程式已關，用原文"); return nil }
         var out = await (m == "qwen" ? local.polish(text, app: app, context: context, terms: store.polishTerms(for: text))
                                      : p.polish(text, app: app, context: n == 0 ? context : "", screen: screen, terms: store.polishTerms(for: text), model: m)).map(Self.tidy)
         var ok = out.map { TextFix.plausible(text, $0) && !TextFix.metaReply(text, $0) } ?? false
@@ -379,10 +411,9 @@ import AVFoundation
             log.line("潤稿 第\(n + 1)/\(total)塊 第一次不可信，重問一次可信")
             out = again; ok = true
         }
-        log.line(String(format: "潤稿%@ %.2f 秒｜畫面 \(screen.count) 字｜可信：%@\n    送：%@\n    回：%@", total > 1 ? " 第\(n + 1)/\(total)塊" : "",
+        log.line(String(format: "潤稿%@ %.2f 秒｜畫面 \(screen.count) 字｜可信：%@\n    送：%@\n    回：%@", total > 1 ? " 第\(n + 1)/\(total)塊" : total == 0 ? " 第\(n + 1)塊（邊講邊潤）" : "",
                         Date().timeIntervalSince(t), out == nil ? "沒回應" : ok ? "是" : "否", text, out ?? "nil"))
-        guard ok, let good = out else { failedParts += 1; return text }
-        return good
+        return ok ? out : nil
     }
 
     /// 放開後再收 0.25 秒：最後一個字常常還沒講完就放開了
