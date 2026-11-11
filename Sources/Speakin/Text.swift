@@ -26,10 +26,18 @@ enum TextFix {
         return (t as String).replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)
     }
 
+    /// 「常被聽成」本身是真的英文單字（report、joy、century）就不直接換：使用者也可能真的在講那個字。
+    /// 這種只透過 polishTerms 當提示，讓潤稿看上下文決定；rois、bres 這種不是單字的照舊直接換。
+    /// ponytail: 用系統的 Webster 詞表，online、email 這類新詞不在裡面會照舊直接換；中文詞分不出來，也照舊直接換
+    /// 只取小寫開頭的一般單字；大寫開頭的是人名地名（Claude），照舊直接換
+    static let words: Set<String> = Set(((try? String(contentsOfFile: "/usr/share/dict/words", encoding: .utf8)) ?? "")
+        .split(separator: "\n").filter { $0.first?.isLowercase == true }.map(String.init))
+    static func englishWord(_ w: String) -> Bool { words.contains(w.lowercased()) }
+
     /// 所有詞一次掃過去、長的先比：一條一條換的話，「Claude」會把已經對的「Claude Code」再換成「Claude Code Code」（#3）
     static func applyDict(_ s: String, _ dict: [DictEntry]) -> String {
         var to: [String: String] = [:]   // 小寫的寫法 → 正確寫法；同一個寫法先出現的算
-        for e in DictEntry.sane(dict) { for w in [e.term] + e.heardAs where !w.isEmpty { to[w.lowercased()] = to[w.lowercased()] ?? e.term } }
+        for e in DictEntry.sane(dict) { for w in [e.term] + e.heardAs.filter({ !englishWord($0) }) where !w.isEmpty { to[w.lowercased()] = to[w.lowercased()] ?? e.term } }
         guard !to.isEmpty else { return s }
         let alts = to.keys.sorted { $0.count > $1.count }.map { w in
             let esc = NSRegularExpression.escapedPattern(for: w)
@@ -63,6 +71,27 @@ enum TextFix {
 
     /// 比對貼上的文字和使用者改過的文字，回傳每一處「原本 → 改成」。
     /// 兩段差太多（像是清空後打了別的話）就不算。
+    /// b 裡對應 a 的那一段（送出的提示前後可能還有別的字）；八成以上的字對不到就當不是這段，回 nil。
+    /// ponytail: 範圍從第一個對到的字到最後一個；改的是頭尾的字會被切掉、學不到，要學的話往外多抓幾個字
+    static func region(of a: String, in b: String) -> String? {
+        let x = Array(a.prefix(400)), y = Array(b.suffix(2000))
+        let n = x.count, m = y.count
+        guard n >= 4, m > 0 else { return nil }
+        var L = Array(repeating: Array(repeating: 0, count: m + 1), count: n + 1)
+        for i in stride(from: n - 1, through: 0, by: -1) {
+            for j in stride(from: m - 1, through: 0, by: -1) {
+                L[i][j] = x[i] == y[j] ? L[i + 1][j + 1] + 1 : max(L[i + 1][j], L[i][j + 1])
+            }
+        }
+        guard Double(L[0][0]) >= 0.8 * Double(n) else { return nil }
+        var i = 0, j = 0, first: Int?, last = 0
+        while i < n, j < m {
+            if x[i] == y[j] { if first == nil { first = j }; last = j; i += 1; j += 1 }
+            else if L[i + 1][j] >= L[i][j + 1] { i += 1 } else { j += 1 }
+        }
+        return first.map { String(y[$0...last]) }
+    }
+
     static func diffPairs(_ a: String, _ b: String) -> [(String, String)] {
         let x = Array(a.prefix(400)), y = Array(b.prefix(400))
         let n = x.count, m = y.count

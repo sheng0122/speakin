@@ -10,6 +10,7 @@ import AVFoundation
     @Published var levels = [Float](repeating: 0, count: 14)
     @Published var staged: URL?   // 新版已下載、驗證好，等使用者按重開
     @Published var message: String? { didSet { pill.update() } }
+    @Published var alert = false   // message 是錯誤：膠囊加圖示、多留 1 秒
     @Published var hotkeyReady = false
     @Published var lastText = ""   // 上一次貼出去的結果，⌥⇧V 再貼一次；歷史設成不存也記得
     @Published var tab: String? = "首頁"
@@ -127,7 +128,7 @@ import AVFoundation
         lastSamples = Date()   // 重開後給 1.5 秒暖機，不要一直重開
         guard state == .recording else { rec.stop(); return applyMic() }
         stalls += 1
-        if stalls > 3 { log.line("麥克風重開 3 次都沒有聲音，停止"); cancel(quiet: true); return fail("麥克風沒收到聲音") }
+        if stalls > 3 { log.line("麥克風重開 3 次都沒有聲音，停止"); cancel(quiet: true); return fail("麥克風沒收到聲音：到設定換一支麥克風") }
         log.line("麥克風（\(rec.deviceName)）1.5 秒沒有聲音進來，重開")
         // 開不起來（藍牙切換到一半）也不放棄，下一秒再試
         do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth); log.line("改用：\(rec.deviceName)") }
@@ -173,13 +174,13 @@ import AVFoundation
 
     enum Sound: String { case start = "Tink" }   // 只有開始響，結束、整理中、出錯都安靜
     private func play(_ x: Sound) { if store.settings.sounds { NSSound(named: x.rawValue)?.play() } }
-    private func fail(_ m: String) { flash(m) }
+    private func fail(_ m: String) { flash(m, alert: true) }
 
     func notify(_ m: String) { flash(m) }
 
-    private func flash(_ m: String) {
-        message = m
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+    private func flash(_ m: String, alert: Bool = false) {
+        self.alert = alert; message = m
+        DispatchQueue.main.asyncAfter(deadline: .now() + (alert ? 4 : 3)) { [weak self] in
             if self?.message == m { self?.message = nil }
         }
     }
@@ -208,7 +209,7 @@ import AVFoundation
         }
         ring = []
         if !rec.running {
-            do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth) } catch { log.line("麥克風打不開：\(error.localizedDescription)"); return fail("麥克風打不開") }
+            do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth) } catch { log.line("麥克風打不開：\(error.localizedDescription)"); return fail(AVCaptureDevice.authorizationStatus(for: .audio) == .denied ? "缺麥克風權限：系統設定 › 隱私權與安全性 › 麥克風" : "麥克風打不開：到設定換一支麥克風") }
             lastSamples = Date()
         }
         log.line("麥克風：\(rec.deviceName)")
@@ -236,7 +237,7 @@ import AVFoundation
         levels.removeFirst(); levels.append(Float(MicMeter.Meter.pos(level)))   // 用 dB 換算，正常講話就跳得明顯
         silentSamples = level < 0.0003 ? silentSamples + s.count : 0
         let elapsed = Date().timeIntervalSince(started)
-        if elapsed > 1, silentSamples > 5 * 16000 { log.line("麥克風 5 秒沒有任何訊號，自動停止"); cancel(); return fail("麥克風沒收到聲音") }
+        if elapsed > 1, silentSamples > 5 * 16000 { log.line("麥克風 5 秒沒有任何訊號，自動停止"); cancel(); return fail("麥克風沒收到聲音：到設定換一支麥克風") }
         if elapsed >= Self.maxSeconds { log.line("到 10 分鐘上限，自動結束"); return finish() }
         startHelpers()
         if let piece = seg.push(s) { enqueue(piece) }
@@ -402,16 +403,19 @@ import AVFoundation
             // 找不到輸入框時 Cmd+V 可能沒地方貼，結果留在剪貼簿才不會掉
             let noTarget = Learner.focused() == nil
             if !noTarget {
-                Learner.watch(pasted: text, onBlind: { [weak self] in
-                    guard let self else { return }
-                    self.log.line("學字｜讀不到這個輸入框的字（\(app)），要改錯字請到歷史紀錄按「修正」")
-                }) { [weak self] pairs in
+                let learn: ([(String, String)]) -> Void = { [weak self] pairs in
                     guard let self else { return }
                     let added = self.store.learn(pairs)
                     guard !added.isEmpty else { return }
                     self.log.line("學字｜" + added.map { "\($0.wrong)→\($0.right)" }.joined(separator: "、"))
                     self.flash("已加入字典：" + added.map(\.right).joined(separator: "、"))
                 }
+                let mark = SentLog.mark()   // 貼上前記下紀錄檔多長，之後只看新加的
+                Learner.watch(pasted: text, onBlind: { [weak self] in
+                    guard let self else { return }
+                    self.log.line("學字｜讀不到這個輸入框的字（\(app)），改等 Claude Code／Codex 的送出紀錄")
+                    SentLog.watch(pasted: text, from: mark, onPairs: learn)
+                }, onPairs: learn)
             }
             Paster.paste(text, keep: store.settings.keepClipboard || noTarget, enter: store.settings.autoEnter && !noTarget)
             lastText = text

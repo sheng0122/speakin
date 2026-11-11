@@ -185,7 +185,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // --screen 檔案：當成畫面內容一起送，量「給畫面」有沒有幫助
                 let screen = args.firstIndex(of: "--screen").flatMap { try? String(contentsOfFile: args[$0 + 1], encoding: .utf8) }.map { String($0.suffix(2000)) } ?? ""
                 if args[i + 1] == "qwen" { Speakin.shared.local.prepare() } else { p.prepare(model: args[i + 1], fresh: true) }
-                while let l = readLine() {
+                while let raw = readLine() {
+                    // --dict 跟 App 一樣：先做字典直接替換，再送潤稿
+                    let l = args.contains("--dict") ? TextFix.applyDict(raw, Store.shared.dict) : raw
                     let t = Date()
                     let out = args[i + 1] == "qwen" ? await Speakin.shared.local.polish(l, app: "", context: "", terms: "")
                                                     : await p.polish(l, app: "", screen: screen, terms: args.contains("--dict") ? Store.shared.polishTerms(for: l) : "", model: args[i + 1])
@@ -297,8 +299,16 @@ enum SelfTest {
         }
         check(Store.newWords("\u{FEFF}Zeabur\n\"Notion\",備註\nline\n\nZeabur\n", have: ["LINE"]) == ["Zeabur", "Notion"], "字典匯入：一行一個、跳過重複和已有的")
         check(TextFix.applyDict("我們公司用諾訊 用 line 聯絡 online", dict) == "我們公司用Notion 用 LINE 聯絡 online", "字典替換")
+        let repo = [DictEntry(term: "repo", heardAs: ["report"]), DictEntry(term: "ROAS", heardAs: ["rois"])]
+        check(TextFix.applyDict("業績 report 跟 rois", repo) == "業績 report 跟 ROAS"
+              && Store.polishTerms(repo, for: "業績 report").hasPrefix("repo（常被聽成 report）"), "常被聽成是英文單字：不直接換，只給潤稿當提示")
         check(TextFix.diffPairs("我們公司用諾訊。", "我們公司用Notion。").map { "\($0.0)>\($0.1)" } == ["諾訊>Notion"], "找出修改")
         check(TextFix.diffPairs("明天開會", "好的收到").isEmpty, "整段換掉不學")
+        let sent = "另外補充：" + "我們把 report 推上去，然後跑測試看看".replacingOccurrences(of: "report", with: "repo") + "\n第二點是別的"
+        check(TextFix.region(of: "我們把 report 推上去，然後跑測試看看", in: sent) == "我們把 repo 推上去，然後跑測試看看"
+              && TextFix.region(of: "我們把 report 推上去", in: "完全無關的一句話") == nil, "送出的提示裡找到貼上的那段")
+        check(SentLog.prompt(#"{"display":"看 [Pasted text #1 +3 lines] 這段","pastedContents":{"1":{"content":"a\nb"}}}"#) == "看 a\nb 這段"
+              && SentLog.prompt(#"{"ts":1,"text":"codex 的"}"#) == "codex 的", "讀 Claude Code／Codex 送出紀錄")
         func pairs(_ a: String, _ b: String) -> [String] { TextFix.diffPairs(a, b).map { "\($0.0)>\($0.1)" } }
         check(pairs("我們用 cloud floor 部署", "我們用 Cloudflare 部署") == ["cloud floor>Cloudflare"], "英文整個字一起學")
         check(pairs("要做電子房的部分", "要做電子版的部分") == ["電子房>電子版"], "中文單字帶上前後字")
