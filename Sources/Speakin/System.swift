@@ -259,12 +259,21 @@ extension ScreenContext {
             if sub as? String == kAXSecureTextFieldSubrole as String { continue }
             for key in [kAXValueAttribute, kAXTitleAttribute, kAXDescriptionAttribute] {
                 var v: AnyObject?
-                if AXUIElementCopyAttributeValue(e, key as CFString, &v) == .success, let s = v as? String, !s.isEmpty { out.append(s) }
+                if AXUIElementCopyAttributeValue(e, key as CFString, &v) == .success, let s = v as? String, !s.isEmpty { add(s, to: &out) }
             }
             var kids: AnyObject?
             if AXUIElementCopyAttributeValue(e, kAXChildrenAttribute as CFString, &kids) == .success, let k = kids as? [AXUIElement] { stack.append(contentsOf: k.reversed()) }
         }
         return TextFix.mask(out.joined(separator: "\n"))
+    }
+
+    /// 外層元素的說明已經包含裡面每一格的字（「你 我看一下 , 13 分鐘」接著又讀到「你」「我看一下」），
+    /// Title 和 Description 也常常一樣。跟上一筆重疊、或最近 8 筆出現過的就不收。
+    /// 2026-11-12 用 736 份 screen.txt 回放：字數剩 67%，同樣 2000 字能多裝一半畫面。
+    static func add(_ s: String, to out: inout [String]) {
+        if let last = out.last, last.contains(s) { return }
+        if out.suffix(8).contains(s) { return }
+        out.append(s)
     }
 }
 
