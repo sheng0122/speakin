@@ -4,7 +4,7 @@
 比對：Speakin `bfc923c`。
 日期：2026-11-07。只讀程式碼，沒有建置或執行。
 
-> 這是**廣度掃描**，7 個 subagent 各負責 4～18 個 repo，每個 repo 只看幾分鐘，借鏡項目大多停在概念層。逐行對照 Speakin 的深度研究，請看同層的 `../typewhisper.md`、`../hyday-talk.md`、`../voz.md`、`../open-dictate.md`、`../oliv.md`、`../speakmore.md`。
+> 這是**廣度掃描**，7 個 subagent 各負責 4～18 個 repo，每個 repo 只看幾分鐘，借鏡項目大多停在概念層。逐行對照 Speakin 的深度研究，請看同層的 `../typewhisper.md`、`../hyday-talk.md`、`../voz.md`、`../open-dictate.md`、`../oliv.md`、`../speakmore.md`、`../umless.md`。
 > 「Speakin 現況」欄有對照原始碼查證過。標「TW #N」的項目，`../typewhisper.md` 的待修清單已有，以那邊的寫法為準。
 > 各組完整報告在 `group1.md`～`group7.md`，每個 repo 都有基本資料、功能、架構，以及借鏡項目和價值高低。
 
