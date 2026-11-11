@@ -1,0 +1,94 @@
+ 12878 2026-11-06 altic-dev/FluidVoice [Swift] Fastest and only macOS Dictation app with on-device STT and custom trained AI enhancement 
+   665 2026-11-02 vChewing/vChewing-macOS [Swift] 唯音輸入法 macOS 版，恐怕是截至目前為止在功能多樣性方面最強的第三方免費 macOS 系統專用輸入法，採純 Swift 語言寫就，同時支援拼音與注音打字。唯音的著力點是盡可能
+   514 2026-11-06 opennookorg/betterwispr [Swift] Free, open-source, local-first dictation app for macOS. Hold a shortcut, speak, and text i
+   474 2026-11-03 crosswk/SayIt [TypeScript] Open-source voice typing for Windows and macOS — a Wispr Flow / Superwhisper alternative. 
+   390 2026-10-31 AbhishekBarali/SpeakoFlow [Rust] Free, open-source offline voice dictation for Windows, macOS, and Linux. A Wispr Flow alte
+   222 2026-10-28 laubonghaudoi/Chinese_Rime [Lua] 收集非普通話漢語和古漢語的中州韻輸入法拼音方案 Collection of phonetic spelling schemas for Sinitic languages and 
+   203 2026-11-07 Jeffrey0117/SpeakSlow [JavaScript] 🔥 聲聲慢 SpeakSlow：專為中文打造、最快的本地語音輸入。免費開源、100% 本機、不上雲，講完直接貼到游標處，特別適合用語音跟 AI 對話
+   166 2026-11-06 yuetyam/jyutping [Swift] Cantonese Keyboard for iOS & macOS. 粵語拼音輸入法鍵盤
+   111 2026-11-04 chayapats/oliv [Swift] Thai + English voice typing for Mac. Offline speech-to-text that types Thai-spoken tech wo
+    51 2026-11-06 urusaqqrun/jarvis-voice [JavaScript] JarvisVoice：自動語音輸入與操作（macOS 選單列小程式）。開著就自動收音，講的話寫進你正在用的 app；可從選單打開 AI 整理（OpenAI／DeepSeek／Cl
+    50 2026-10-30 NGLI/rime-wugniu_gninpou [] 寧波閒話吳語拼音輸入方案 · 寧波話吳語拼音輸入方案 · A Rime input schema for Ningbo Dialect
+    49 2026-11-05 ryanhuge/voicetype [Python] AI語音輔助輸入_windows系統專用
+    49 2026-11-06 yuetyam/jyutping-android [Kotlin] Cantonese Keyboard for Android. 粵語拼音輸入法鍵盤
+    47 2026-10-16 NGLI/rime-wugniu_zaonhe [] 上海吳語拼音輸入方案 · 上海吴语拼音输入方案 · Rime input schemas for Shanghai Dialects
+    36 2026-11-01 better-slop/hyprwhspr-rs [Rust] Wispr Flow alternative for hyprland
+    35 2026-09-15 Lukem121/voicegecko [TypeScript] Open source, local voice-to-text (Wispr Flow alternative)
+    34 2026-11-06 cleanunicorn/earheart [JavaScript] Talk to your coding agents — press a hotkey, speak your prompt, and it lands in Claude Cod
+    31 2026-11-04 blakkd/faster-whisper-hotkey [Python] Effortless Push-to-Talk Transcription, Anywhere.
+    27 2026-11-05 Joelheile/voz [Swift] Free, open source dictation for Mac. A Wispr Flow alternative that runs offline and grows 
+    23 2026-11-06 qso71/gouge-smart-input-releases [Ruby] 狗哥智慧輸入法：macOS 注音輸入法，整句組字、中英混打免切換、英文與成語自動完成
+    22 2026-09-16 daniel-carreon/sflow [Python] Open-source voice-to-text for macOS. Wispr Flow alternative at 99% lower cost. Groq Whispe
+    19 2026-10-22 TTinkr/Tether [Swift] Dictation macOS desktop app
+    19 2026-11-06 sushilk1991/velora [Swift] Free, local-first, on-device dictation for macOS (Apple Silicon). Hold a key, speak, and V
+    17 2026-11-01 LuiInventions/OpenFlow [JavaScript] Local-first voice dictation, quick notes, and screenshot dock for Windows (GPL-3.0-only). 
+    15 2026-10-12 avijeett007/openflow [Rust] OpenFlow — open-source, local-first voice dictation (Wispr Flow alternative). Fork of Hand
+    11 2026-09-16 ryanhuge/typegood [Swift] TypeGood — macOS 語音輸入工具。按住右側 ⌘ 說話，Groq Whisper 辨識 + OpenAI 語意修正，自動輸入文字。
+    10 2026-11-06 Magnus-Gille/sagascript [Rust] Low-latency, privacy-first dictation for macOS. Push-to-talk transcription with local Whis
+    10 2026-11-04 mukiwu/hyday-talk [Swift] Hyday Talk 是一款原生 macOS 語音輸入工具，使用者在任何 App 中按下 fn 即可開始說話，再按一次 fn 完成，辨識並整理後的文字會插入原本的游標位置
+    10 2026-11-04 felixfu824/Lamitype [Swift] Lamitype (formerly HushType): free, privacy-first voice-to-text for macOS. Traditional-Chi
+     9 2026-10-14 nicremo/yap [TypeScript] Free, open source dictation for macOS and Windows. A Wispr Flow alternative with fast Groq
+     9 2026-11-01 Zer0codestuff/whisperdrop-2 [Swift] Free, open-source Mac app for local transcription and dictation. Transcribe audio, video, 
+     8 2026-10-08 nexos-1/localflow [Python] Fully local voice dictation for Windows (macOS experimental): hold a hotkey, speak, get po
+     7 2026-11-03 Robj1925/open-flow [Swift] Open-source, local-only voice dictation for macOS. Hold a key, speak, release. A free Wisp
+     7 2026-11-02 FOwen123/owl [Rust] Private dictation and meeting notes that run on your computer, specialized in English+Chin
+     6 2026-11-06 Muhammad-Waleed381/OpenDictate [Rust] 🎙️ Free, open-source, local-first AI voice dictation for Windows, macOS, and Linux. The pr
+     6 2026-10-14 LeoMartinDev/Plume [Rust] Free, open-source voice dictation for macOS, Windows & Linux. Push-to-talk speech-to-text 
+     6 2026-09-27 Zosuya/Tsunagi-IME [Rust] 通譯輸入法 · 通（つなぎ）· Tsunagi — 自動辨識中文注音／英文／日文羅馬字的 Windows TSF 輸入法，不必手動切換語言
+     5 2026-10-11 liujgoj/rime-cantonese-liujgoj [] 溜歌粵語拼音輸入法
+     5 2026-11-06 SiqYin/wugniu_suwu [Lua] 蘇滬混合腔吳語拼音輸入方案/苏沪混合腔吴语拼音输入方案
+     5 2026-10-30 intentionltd888/talky [] Mac 上的繁體中文語音輸入法：連按兩下右 ⌘、講、貼進游標；聲音不出電腦。Traditional Chinese voice typing for macOS.
+     5 2026-10-23 CocaKova/orpheus [Kotlin] Self-hosted dictation: Parakeet speech-to-text server, Android floating dictation orb, Win
+     4 2026-10-02 NathanNT/llm-mascot [Python] Desktop AI mascot for Windows - local voice dictation, Whisper, Codex/Claude rewriting, us
+     4 2026-09-14 yuetyam/jyutping-windows [C++] Cantonese input method for Windows. 粵語拼音輸入法
+     3 2026-11-04 GrimFandango42/VoiceFlow [Python] Free, local, open-source push-to-talk transcription for Windows. Hold Ctrl+Shift, speak, r
+     3 2026-09-25 kagangungor/TRWhisper [C#] 🎙️ Completely local, privacy-first push-to-talk dictation app for Windows 11. Powered by w
+     3 2026-09-21 atheerium/voxtype [Rust] Free, open-source voice-to-text dictation for Linux. Press Ctrl+Space, speak, and your wor
+     3 2026-11-06 Breakzoras/fuck-you-flow [Rust] Free, open-source Wispr Flow alternative for Windows and Ubuntu Linux. Press a key, speak,
+     3 2026-09-27 yuetyam/jyutping-harmony [Rust] 鴻蒙 HarmonyOS 粵語拼音輸入法鍵盤
+     3 2026-11-01 Hereisaa/vocium [TypeScript] 簡單易用的 AI 桌面語音輸入：按快捷鍵說話，文字即落入焦點輸入框，具備潤飾與自訂 Persona。 開源免費、BYOK、Windows / macOS 都適用。
+     2 2026-11-02 pistonpunk/silisten [Python] Push-to-talk transcription for Linux with speaker labels
+     2 2026-11-06 dicty-io/dicty [Swift] Open-source, offline voice dictation for macOS & Windows. Local whisper.cpp on Metal, <300
+     2 2026-11-06 mariadb-RupeshBiswas/local-stt [Rust] Free offline push-to-talk speech-to-text: dictation and meeting notes for macOS and Window
+     2 2026-10-07 erikchristi/open-whisper [Python] Lokale Wispr-Flow-Alternative: Diktieren per Hotkey, Whisper laeuft komplett offline (Wind
+     2 2026-11-04 bobjoemama/LocalScribe [TypeScript] Wispr Flow alternative running models like Canary Qwen and Parakeet, and more. Local-first
+     1 2026-11-03 W1nq-coder/hyprstack-personal-config [QML] Add-ons for the HyperStack Hyprland shell: local voice dictation (whisper.cpp), night ligh
+     1 2026-10-13 andrew99666/whisper-dictate [Python] Fast multilingual Windows dictation. Whisper Turbo supports 99+ languages with auto-detect
+     1 2026-10-24 parsakhaz/open-dictate [TypeScript] An open-source, platform agnostic, fully local Willow Voice / Superwhisper alternative: ho
+     1 2026-09-13 ikrishra/minaflow [Swift] The open-source Wispr Flow & Superwhisper alternative for macOS. Fast, private push-to-tal
+     0 2026-11-05 urihell/whisper-dictation-macos [Swift] 
+     0 2026-10-31 Skeptomenos/Murmeln [Swift] Push-to-talk dictation macOS menu bar app
+     0 2026-09-29 alexktitarov/local-whisper-dictation-macos [Swift] On-device, real-time voice dictation for macOS. Whisper on the Neural Engine types your wo
+     0 2026-10-12 rudrabhoj/voxtype-osd-gpui [Rust] Catppuccin Mocha GPUI recording overlay for voxtype dictation (macOS and Wayland)
+     0 2026-09-14 Komiljon006/uzbek-dictation [Python] O'zbekcha ovozli yozuv (dictation) macOS uchun — offline, rubaiSTT + whisper.cpp. Ctrl+Opt
+     0 2026-09-26 cmwright/aside [Swift] Push-to-talk dictation: macOS menu-bar app with on-device Parakeet or cloud STT, LLM clean
+     0 2026-10-29 Hamertingo/hz [TypeScript] A desktop home for a coding agent: many sessions at once, each in its own worktree, with d
+     0 2026-10-27 Febrile-HJ/voice-typing-mac [Shell] Joseph's Voice-Typing 맥 설치 파일 (비밀번호 필요)
+     0 2026-10-21 rvboris/charon [Rust] Linux-first push-to-talk transcription (Tauri 2)
+     0 2026-11-06 Moggeth/push-to-talk-realtime [Python] Standalone push-to-talk transcription tray app for Windows
+     0 2026-10-18 BillMillWIll/local-flow [Swift] Local macOS push-to-talk transcription with whisper.cpp
+     0 2026-11-04 NAKAK10/ptarmigan-flow [Python] A push-to-talk transcription daemon for macOS using Moonshine AI.
+     0 2026-11-03 yung-sun-xxi/WhisperKey [Swift] Native macOS menu bar voice dictation utility — fast push-to-talk transcription via OpenAI
+     0 2026-10-11 itsprocess/VoiceHook [C#] Windows push-to-talk transcription to webhooks: keyboard, Stream Deck, and UDP; Windows or
+     0 2026-10-15 powell-clark/voice-to-text [Rust] Push-to-talk transcription with local Whisper and Parakeet models and Vulkan/Metal GPU acc
+     0 2026-09-15 DustinHyle/whytype [Python] Why Type — local voice dictation (whisper.cpp + cross-vendor GPU acceleration)
+     0 2026-09-08 vickhunter/dictatekit [JavaScript] Cross-platform privacy-first voice dictation (Whisper/Parakeet). Local-first fork based on
+     0 2026-10-12 Yuvansh-Shah/flowlite [Python] Local Windows speech-to-text dictation — Whisper on the GPU + a local LLM for cleanup
+     0 2026-10-27 ianzepp/dictate [Swift] Local hotkey dictation: Whisper Turbo, a resident cleanup model, and a menu-bar paste app.
+     0 2026-10-20 nathannncurtis/whisper-ptt [Python] Fully local push-to-talk dictation: Whisper on Intel NPU via OpenVINO, AHK front-end
+     0 2026-10-22 marcelfernandes1/murmur [Swift] Local, offline macOS dictation — Whisper + Parakeet ASR with a local LLM cleanup pass (a W
+     0 2026-11-04 gutsmcd-cmd/onsei-nyuryoku [TypeScript] 音声入力 / Voice Typing: offline dictation, Whisper on your device. Free, no ads, no login.
+     0 2026-10-13 jvkenny/parchment [Lua] Self-hosted push-to-talk dictation: Whisper on your own GPU, macOS hotkey + Android overla
+     0 2026-10-28 99Arrzel/voice-dictate [Python] Push-to-talk dictation: Whisper on your GPU + LLM cleanup, typed into the focused window. 
+     0 2026-10-10 Mihai-Streanga/Jasmine-public [Python] Personal AI assistant hub: a local web console over Open WebUI with multiple personas, Gma
+     0 2026-11-01 egornefedovcz/whisper-dictate [TypeScript] Self-hosted voice dictation: Whisper large-v3-turbo on your own CPU server, a macOS menuba
+     0 2026-10-14 Akilaydin/OriApps.SayForge [TypeScript] Open-source voice dictation for Windows — a Wispr Flow / Superwhisper alternative. Press a
+     0 2026-10-30 catgirl3d/SayIt [TypeScript] Open-source voice typing for Windows — a Wispr Flow / Superwhisper alternative. Press a sh
+     0 2026-11-05 maxnowack/OutLoud [Swift] Free, open-source offline dictation for Mac and iPhone. Hold ⌥⌘, speak, and on-device spee
+     0 2026-10-10 nitkrar/personal_scribe_mac [Swift] Seshat — local, on-device macOS voice dictation. Parakeet-TDT via FluidAudio. MIT.
+     0 2026-10-15 HayGrouve/dictum [Rust] Fast, private, local hold-to-talk dictation (Parakeet TDT on ONNX Runtime) — a minimal Wis
+     0 2026-10-27 benlaval23/bensvoice-windows [Python] Hold a key, talk, and it types. Windows tray app for local dictation (Parakeet) and Claude
+     0 2026-11-02 Pierre-Mike/hammerspoon [Lua] My Hammerspoon config — menu-bar dictation (parakeet-mlx STT), ambient noise, voice contro
+     0 2026-09-30 kjagsadvisors/opennotch [Swift] Voice for your whole Mac, in the notch. Open-source dictation (Parakeet + Claude cleanup) 
+     0 2026-10-08 alexellis/VoiceShim [Swift] Local voice for superterm on a Mac: on-device dictation (Parakeet on the Neural Engine) an
+     0 2026-10-06 nakamotosai/ainput [Rust] Local-first Windows voice dictation (SenseVoice) with optional OpenAI-compatible rewrite

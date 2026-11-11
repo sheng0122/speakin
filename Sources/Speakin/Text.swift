@@ -26,24 +26,72 @@ enum TextFix {
         return (t as String).replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)
     }
 
+    /// 「常被聽成」本身是真的英文單字（report、joy、century）就不直接換：使用者也可能真的在講那個字。
+    /// 這種只透過 polishTerms 當提示，讓潤稿看上下文決定；rois、bres 這種不是單字的照舊直接換。
+    /// ponytail: 用系統的 Webster 詞表，online、email 這類新詞不在裡面會照舊直接換；中文詞分不出來，也照舊直接換
+    /// 只取小寫開頭的一般單字；大寫開頭的是人名地名（Claude），照舊直接換
+    static let words: Set<String> = Set(((try? String(contentsOfFile: "/usr/share/dict/words", encoding: .utf8)) ?? "")
+        .split(separator: "\n").filter { $0.first?.isLowercase == true }.map(String.init))
+    static func englishWord(_ w: String) -> Bool { words.contains(w.lowercased()) }
+
+    /// 所有詞一次掃過去、長的先比：一條一條換的話，「Claude」會把已經對的「Claude Code」再換成「Claude Code Code」（#3）
     static func applyDict(_ s: String, _ dict: [DictEntry]) -> String {
-        var s = s
-        for e in DictEntry.sane(dict) {
-            for w in e.heardAs + [e.term] where !w.isEmpty {
-                let esc = NSRegularExpression.escapedPattern(for: w)
-                // 英文詞要整字比對，免得 online 變 onLINE
-                let pat = w.unicodeScalars.allSatisfy(\.isASCII) ? "(?<![A-Za-z])\(esc)(?![A-Za-z])" : esc
-                s = s.replacingOccurrences(of: pat, with: NSRegularExpression.escapedTemplate(for: e.term),
-                                           options: [.regularExpression, .caseInsensitive])
-            }
+        var to: [String: String] = [:]   // 小寫的寫法 → 正確寫法；同一個寫法先出現的算
+        for e in DictEntry.sane(dict) { for w in [e.term] + e.heardAs.filter({ !englishWord($0) }) where !w.isEmpty { to[w.lowercased()] = to[w.lowercased()] ?? e.term } }
+        guard !to.isEmpty else { return s }
+        let alts = to.keys.sorted { $0.count > $1.count }.map { w in
+            let esc = NSRegularExpression.escapedPattern(for: w)
+            // 英文詞要整字比對，免得 online 變 onLINE
+            return w.unicodeScalars.allSatisfy(\.isASCII) ? "(?<![A-Za-z])\(esc)(?![A-Za-z])" : esc
         }
-        return s
+        guard let re = try? NSRegularExpression(pattern: alts.joined(separator: "|"), options: .caseInsensitive) else { return s }
+        let ns = s as NSString, out = NSMutableString()
+        var at = 0
+        for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out.append(ns.substring(with: NSRange(location: at, length: m.range.location - at)))
+            let hit = ns.substring(with: m.range)
+            out.append(to[hit.lowercased()] ?? hit)
+            at = m.range.location + m.range.length
+        }
+        out.append(ns.substring(from: at))
+        return out as String
+    }
+
+    /// 辨識卡住一直重複同一小段（「好的好的好的好的」「我們我們我們我們」）：2～8 個字連續出現 4 次以上
+    static let loop = try! NSRegularExpression(pattern: "(.{2,8}?)\\1{3,}")
+    static func looping(_ s: String) -> Bool {
+        loop.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)) != nil
+    }
+    /// 重複的只留一次
+    static func unloop(_ s: String) -> String {
+        loop.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: (s as NSString).length), withTemplate: "$1")
     }
 
     static let junk = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).union(.symbols)
 
     /// 比對貼上的文字和使用者改過的文字，回傳每一處「原本 → 改成」。
     /// 兩段差太多（像是清空後打了別的話）就不算。
+    /// b 裡對應 a 的那一段（送出的提示前後可能還有別的字）；八成以上的字對不到就當不是這段，回 nil。
+    /// ponytail: 範圍從第一個對到的字到最後一個；改的是頭尾的字會被切掉、學不到，要學的話往外多抓幾個字
+    static func region(of a: String, in b: String) -> String? {
+        let x = Array(a.prefix(400)), y = Array(b.suffix(2000))
+        let n = x.count, m = y.count
+        guard n >= 4, m > 0 else { return nil }
+        var L = Array(repeating: Array(repeating: 0, count: m + 1), count: n + 1)
+        for i in stride(from: n - 1, through: 0, by: -1) {
+            for j in stride(from: m - 1, through: 0, by: -1) {
+                L[i][j] = x[i] == y[j] ? L[i + 1][j + 1] + 1 : max(L[i + 1][j], L[i][j + 1])
+            }
+        }
+        guard Double(L[0][0]) >= 0.8 * Double(n) else { return nil }
+        var i = 0, j = 0, first: Int?, last = 0
+        while i < n, j < m {
+            if x[i] == y[j] { if first == nil { first = j }; last = j; i += 1; j += 1 }
+            else if L[i + 1][j] >= L[i][j + 1] { i += 1 } else { j += 1 }
+        }
+        return first.map { String(y[$0...last]) }
+    }
+
     static func diffPairs(_ a: String, _ b: String) -> [(String, String)] {
         let x = Array(a.prefix(400)), y = Array(b.prefix(400))
         let n = x.count, m = y.count
@@ -134,6 +182,11 @@ enum TextFix {
         // 不能亂加（輸出 7 成以上來自原文），也不能整段漏掉（贅字可以刪，但最多刪 4 成或 8 個字；有改口、收回時放寬到 6 成或 20 字）
         let common = Double(prev[y.count]), fixing = backtrack.contains { input.contains($0) }
         return common >= 0.7 * Double(y.count) && Double(x.count) - common <= (fixing ? max(20, 0.6 * Double(x.count)) : max(8, 0.4 * Double(x.count)))
+    }
+
+    /// 模型在講自己的工作（「這是潤稿任務，我只整理逐字稿本身。」），不是使用者的話；原文本來就有這些詞不算
+    static func metaReply(_ input: String, _ output: String) -> Bool {
+        ["潤稿任務", "逐字稿本身", "整理逐字稿", "我只整理"].contains { output.contains($0) && !input.contains($0) }
     }
 
     /// 長文切成幾塊分開潤稿：一次潤太長，Haiku 會刪句、改寫成重點，甚至開始回答內容。

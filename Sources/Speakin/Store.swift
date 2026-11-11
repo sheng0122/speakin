@@ -201,6 +201,8 @@ struct Settings: Codable, Equatable {
     func learn(_ pairs: [(String, String)]) -> [(wrong: String, right: String)] {
         var added: [(wrong: String, right: String)] = []
         for (w, r) in pairs where r.count >= 2 && w.lowercased() != r.lowercased() && Self.looksLikeFix(w, r) {
+            // 這個錯字已經是別的詞的寫法（或常被聽成）：再學會讓同一個字指到兩個詞
+            if dict.contains(where: { $0.term != r && ($0.term.lowercased() == w.lowercased() || $0.heardAs.contains(w)) }) { continue }
             if let i = dict.firstIndex(where: { $0.term == r }) {
                 if dict[i].heardAs.contains(w) { continue }
                 dict[i].heardAs.append(w)
@@ -213,6 +215,8 @@ struct Settings: Codable, Equatable {
 
     /// 純中文的改動多半是改寫句子，不是聽錯字：要長度一樣、只差一半以內的字才算（電子房→電子版）
     nonisolated static func looksLikeFix(_ w: String, _ r: String) -> Bool {
+        // 只改了數字（90→95、三點→四點）是改內容，不是聽錯
+        if w.filter({ !$0.isNumber }) == r.filter({ !$0.isNumber }) { return false }
         guard !(w + r).contains(where: \.isASCII) else { return true }
         guard w.count == r.count else { return false }
         return zip(w, r).filter { $0 != $1 }.count <= max(1, r.count / 2)
@@ -227,7 +231,7 @@ struct Settings: Codable, Equatable {
         lastLearned = []
     }
 
-    /// 給 Breeze 和潤稿模型看的專有名詞清單
+    /// 給辨識模型和潤稿模型看的專有名詞清單
     var terms: String { asrTerms }
 
     /// 辨識提示：權重最高的 20 個（提示太長辨識會照抄詞）

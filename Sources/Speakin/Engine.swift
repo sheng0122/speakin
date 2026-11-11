@@ -1,7 +1,7 @@
 import AppKit
 import AVFoundation
 
-/// 主流程：Fn → 錄音（邊講邊切段送 Breeze）→ Fn → 字典替換 → Haiku 潤稿 → 貼上 → 15 秒後學習
+/// 主流程：Fn → 錄音（邊講邊切段送本機辨識 TEA-ASR）→ Fn → 字典替換 → Haiku 潤稿 → 貼上 → 15 秒後學習
 @MainActor final class Speakin: ObservableObject {
     static let shared = Speakin()
     enum State { case idle, recording, processing }
@@ -10,6 +10,7 @@ import AVFoundation
     @Published var levels = [Float](repeating: 0, count: 14)
     @Published var staged: URL?   // 新版已下載、驗證好，等使用者按重開
     @Published var message: String? { didSet { pill.update() } }
+    @Published var alert = false   // message 是錯誤：膠囊加圖示、多留 1 秒
     @Published var hotkeyReady = false
     @Published var lastText = ""   // 上一次貼出去的結果，⌥⇧V 再貼一次；歷史設成不存也記得
     @Published var tab: String? = "首頁"
@@ -18,6 +19,7 @@ import AVFoundation
     let store = Store.shared
     let asr = ASR()
     let polisher = Polisher()
+    private var tidier: Polisher?   // 長文分塊潤完，整段再整理一次（分段、接縫、跨塊重複）；跟 helpers 一起開關
     private var helpers: [Polisher] = []   // 錄音超過 20 秒（約 100 字，會分塊）才開，長文分塊同時潤稿，用完就關
     let local = LocalPolisher()
     private let rec = Recorder()
@@ -26,6 +28,8 @@ import AVFoundation
     private var seg = Segmenter()
     private var gen = 0                                   // 第幾次錄音；取消或重錄後，舊的工作自動放棄
     private var pieces: [Task<String, Never>] = []        // 每段辨識結果
+    private var early: [String: Task<String?, Never>] = [:]   // 邊講邊潤：已經講完的塊先送去潤，用塊的文字當 key，放開後切出一樣的塊就直接拿
+    private var queue: [ObjectIdentifier: Task<String?, Never>] = [:], queued: [ObjectIdentifier: Int] = [:]   // 每個潤稿程式一次只能問一題，排隊
     private var failedParts = 0, totalParts = 0              // 幾塊潤稿不可信、總共幾塊
     private var polishFailed: Bool { failedParts > 0 }
     private var segCount = 0
@@ -39,6 +43,8 @@ import AVFoundation
     private var iMuted = false            // 是 Speakin 把系統靜音的，結束時只還原自己關的
     private var silentSamples = 0         // 連續幾乎沒訊號的取樣數，麥克風壞掉或被拔掉時自動停
     private var lastTap = Date.distantPast
+    private var lastSamples = Date()      // 上次收到聲音；麥克風開著卻一直沒聲音進來 = 卡住了
+    private var stalls = 0                // 這次錄音看門狗重開了幾次都沒救回來
     private var ring: [Float] = []        // 麥克風常開時，按下前最近 0.45 秒的聲音
     private var ending = false            // 放開後多收 0.25 秒尾音中
     static let maxSeconds: Double = 600   // 單次錄音上限 10 分鐘，最後 1 分鐘膠囊的秒數變橘色
@@ -64,6 +70,16 @@ import AVFoundation
         hotkey.onPasteLast = { [weak self] in MainActor.assumeIsolated { self?.pasteLast() } }
         lastText = store.history.last(where: { !$0.text.isEmpty })?.text ?? ""
         rec.onSamples = { [weak self] s in DispatchQueue.main.async { self?.feed(s) } }
+        rec.onChange = { [weak self] in MainActor.assumeIsolated { self?.micChanged() } }
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.watchMic() } }
+        // 睡覺時關麥克風，醒來再照設定開
+        let ws = NSWorkspace.shared.notificationCenter
+        ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { if let self, self.state == .idle { self.rec.stop() } }
+        }
+        ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyMic() }
+        }
         applyMic()
         // 啟動 10 秒後查一次新版，之後每 6 小時
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in Task { await self?.checkUpdate() } }
@@ -86,7 +102,40 @@ import AVFoundation
         guard state == .idle else { return }
         if rec.running { rec.stop() }
         ring = []
-        if store.settings.micAlwaysOn { try? rec.start(mic: store.settings.mic, avoidBluetooth: store.settings.avoidBluetooth) }
+        // 藍牙耳機一直開著麥克風會卡在通話模式（音樂整天變糊），這時候不常開，按下才開
+        let s = store.settings
+        guard s.micAlwaysOn, !(SystemAudio.pick(mic: s.mic, avoidBluetooth: s.avoidBluetooth).map(SystemAudio.isBluetooth) ?? false) else { return }
+        try? rec.start(mic: s.mic, avoidBluetooth: s.avoidBluetooth)
+        lastSamples = Date()
+    }
+
+    /// 系統因為裝置變動把麥克風停了：沒在錄就照設定重開，錄到一半就接著錄（已切好的段落不動）
+    private func micChanged() {
+        guard !rec.running else { return }
+        switch state {
+        case .idle: applyMic()
+        case .recording:
+            log.line("麥克風裝置變了，重開接著錄")
+            lastSamples = Date()
+            do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth) } catch {
+                log.line("麥克風重開失敗：\(error.localizedDescription)，等看門狗再試")
+            }
+        case .processing: break
+        }
+    }
+
+    /// 看門狗：AirPods 連上切通話模式時，engine 說自己在跑、卻一直沒有聲音送進來，也不會發通知。
+    /// 開著超過 1.5 秒沒收到聲音就重開；錄音中重開不影響已經切好的段落（2026-11-07 實測：錄 10 秒只收到按下前那 0.45 秒）
+    private func watchMic() {
+        guard state != .processing, state == .recording || rec.running, Date().timeIntervalSince(lastSamples) > 1.5 else { return }
+        lastSamples = Date()   // 重開後給 1.5 秒暖機，不要一直重開
+        guard state == .recording else { rec.stop(); return applyMic() }
+        stalls += 1
+        if stalls > 3 { log.line("麥克風重開 3 次都沒有聲音，停止"); cancel(quiet: true); return fail("麥克風沒收到聲音：到設定換一支麥克風") }
+        log.line("麥克風（\(rec.deviceName)）1.5 秒沒有聲音進來，重開")
+        // 開不起來（藍牙切換到一半）也不放棄，下一秒再試
+        do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth); log.line("改用：\(rec.deviceName)") }
+        catch { log.line("麥克風重開失敗：\(error.localizedDescription)") }
     }
 
     private func stopMic() { if !store.settings.micAlwaysOn { rec.stop() } }
@@ -128,13 +177,13 @@ import AVFoundation
 
     enum Sound: String { case start = "Tink" }   // 只有開始響，結束、整理中、出錯都安靜
     private func play(_ x: Sound) { if store.settings.sounds { NSSound(named: x.rawValue)?.play() } }
-    private func fail(_ m: String) { flash(m) }
+    private func fail(_ m: String) { flash(m, alert: true) }
 
     func notify(_ m: String) { flash(m) }
 
-    private func flash(_ m: String) {
-        message = m
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+    private func flash(_ m: String, alert: Bool = false) {
+        self.alert = alert; message = m
+        DispatchQueue.main.asyncAfter(deadline: .now() + (alert ? 4 : 3)) { [weak self] in
             if self?.message == m { self?.message = nil }
         }
     }
@@ -155,14 +204,18 @@ import AVFoundation
         do { try asr.ensureRunning(model: runSettings.asrModel) } catch { return fail(error.localizedDescription) }
         reset()
         log.start("開始｜App：\(app)｜潤稿：\(runSettings.polish ? runSettings.model : "關")｜畫面前文：\(context)")
+        // 常開的麥克風卡住了（engine 在跑但沒聲音）：按下時就重開，不要等看門狗、白白少錄 1.5 秒
+        if rec.running, Date().timeIntervalSince(lastSamples) > 0.5 { log.line("常開的麥克風（\(rec.deviceName)）沒有聲音進來，重開"); rec.stop(); ring = [] }
         if rec.running, !ring.isEmpty {   // 麥克風常開：把按下前那一小段接上，句首不會被吃掉
             log.line(String(format: "接上按下前 %.2f 秒", Double(ring.count) / 16000))
             if let piece = seg.push(ring) { enqueue(piece) }
         }
         ring = []
         if !rec.running {
-            do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth) } catch { log.line("麥克風打不開：\(error.localizedDescription)"); return fail("麥克風打不開") }
+            do { try rec.start(mic: runSettings.mic, avoidBluetooth: runSettings.avoidBluetooth) } catch { log.line("麥克風打不開：\(error.localizedDescription)"); return fail(AVCaptureDevice.authorizationStatus(for: .audio) == .denied ? "缺麥克風權限：系統設定 › 隱私權與安全性 › 麥克風" : "麥克風打不開：到設定換一支麥克風") }
+            lastSamples = Date()
         }
+        log.line("麥克風：\(rec.deviceName)")
         started = Date()
         message = nil
         play(.start)
@@ -173,11 +226,12 @@ import AVFoundation
 
     private func reset() {
         gen += 1
-        seg = Segmenter(); pieces = []; failedParts = 0; totalParts = 0; segCount = 0; ending = false
+        seg = Segmenter(); pieces = []; early = [:]; queue = [:]; queued = [:]; failedParts = 0; totalParts = 0; segCount = 0; ending = false
         if runSettings.polish { preparePolish(runSettings.model) }
     }
 
     private func feed(_ s: [Float]) {
+        lastSamples = Date(); stalls = 0
         guard state == .recording else {
             if state == .idle, rec.running { ring += s; if ring.count > 7200 { ring.removeFirst(ring.count - 7200) } }
             return
@@ -186,7 +240,7 @@ import AVFoundation
         levels.removeFirst(); levels.append(Float(MicMeter.Meter.pos(level)))   // 用 dB 換算，正常講話就跳得明顯
         silentSamples = level < 0.0003 ? silentSamples + s.count : 0
         let elapsed = Date().timeIntervalSince(started)
-        if elapsed > 1, silentSamples > 5 * 16000 { log.line("麥克風 5 秒沒有任何訊號，自動停止"); cancel(); return fail("麥克風沒收到聲音") }
+        if elapsed > 1, silentSamples > 5 * 16000 { log.line("麥克風 5 秒沒有任何訊號，自動停止"); cancel(); return fail("麥克風沒收到聲音：到設定換一支麥克風") }
         if elapsed >= Self.maxSeconds { log.line("到 10 分鐘上限，自動結束"); return finish() }
         startHelpers()
         if let piece = seg.push(s) { enqueue(piece) }
@@ -212,24 +266,70 @@ import AVFoundation
             let before = await prevRaw?.value ?? screen
             guard my == self.gen else { return "" }
             let prompt = terms + " " + String(before.suffix(40)), t = Date()
-            do {
-                var text = try await self.asr.transcribe(piece, prompt: prompt)
-                if last, text.allSatisfy({ "嗯啊呃喔。，、 ".contains($0) }) { text = "" }   // 句尾沒講話時辨識會吐「嗯」
-                self.log.line(String(format: "段%d 辨識 %.2f 秒｜提示：%@｜結果：%@", n, Date().timeIntervalSince(t), prompt, text)
-                              + (self.asr.stripped > 0 ? "｜清掉怪字元 \(self.asr.stripped) 個" : ""))
-                return text
-            } catch {
-                self.log.line("段\(n) 辨識失敗：\(error.localizedDescription)")
-                self.asrError = error.localizedDescription; return ""
+            var text: String
+            do { text = try await self.asr.transcribe(piece, prompt: prompt) } catch {
+                // 失敗或卡在重複時，不帶提示再跑一次：提示常是卡住的原因，第二次多半就好了
+                self.log.line("段\(n) 辨識失敗：\(error.localizedDescription)，不帶提示再試一次")
+                do { text = try await self.asr.transcribe(piece, prompt: "") } catch {
+                    self.log.line("段\(n) 再試還是失敗：\(error.localizedDescription)")
+                    self.asrError = error.localizedDescription; return ""
+                }
             }
+            if TextFix.looping(text) {
+                let again = (try? await self.asr.transcribe(piece, prompt: "")) ?? ""
+                self.log.line("段\(n) 辨識卡在重複：\(text)｜不帶提示重跑：\(again)")
+                text = TextFix.looping(again) || again.isEmpty ? TextFix.unloop(text) : again
+            }
+            guard my == self.gen else { return "" }
+            if last, text.allSatisfy({ "嗯啊呃喔。，、 ".contains($0) }) { text = "" }   // 句尾沒講話時辨識會吐「嗯」
+            self.log.line(String(format: "段%d 辨識 %.2f 秒｜提示：%@｜結果：%@", n, Date().timeIntervalSince(t), prompt, text)
+                          + (self.asr.stripped > 0 ? "｜清掉怪字元 \(self.asr.stripped) 個" : ""))
+            return text
         }
         pieces.append(raw)
+        Task { _ = await raw.value; await self.polishEarly(my) }
+    }
+
+    /// 字典替換、刪掉收回的話：放開後和邊講邊潤要用同一套，切出來的塊才會一樣
+    private func fixed(_ raws: [String]) -> (raw: String, fixed: String) {
+        let raw = raws.filter { !$0.isEmpty }.reduce("", Self.join)
+        return (raw, TextFix.dropRetracted(TextFix.applyDict(raw, store.dict)))
+    }
+
+    /// 每辨識完一段，把目前的字切塊，除了最後一塊（還在講）都先送去潤。
+    /// 後面的話改變了前面的塊（收回、字典），放開後切出來的字不一樣就對不到，那塊重潤，結果一樣正確
+    private func polishEarly(_ my: Int) async {
+        guard my == gen, runSettings.polish, runSettings.model != "qwen", !helpers.isEmpty else { return }
+        var raws: [String] = []
+        for p in pieces { raws.append(await p.value) }
+        guard my == gen else { return }
+        let parts = TextFix.chunks(fixed(raws).fixed)
+        for (i, t) in parts.dropLast().enumerated() where early[t] == nil { early[t] = schedule(t, n: i, total: 0) }
+    }
+
+    /// 排給目前最閒的潤稿程式；同一個程式照順序一題一題問
+    private func schedule(_ text: String, n: Int, total: Int) -> Task<String?, Never> {
+        let workers = [polisher] + helpers, my = gen
+        let w = workers.min { queued[ObjectIdentifier($0), default: 0] < queued[ObjectIdentifier($1), default: 0] }!, id = ObjectIdentifier(w)
+        let prev = queue[id]
+        queued[id, default: 0] += 1
+        let t = Task { @MainActor () -> String? in
+            _ = await prev?.value
+            defer { if my == self.gen { self.queued[id, default: 1] -= 1 } }
+            guard my == self.gen else { return nil }
+            return await self.polishPart(text, n: n, of: total, with: w)
+        }
+        queue[id] = t
+        return t
     }
 
     /// 錄音過 20 秒，長文很可能要分塊，先多暖機 2 個 claude（暖機要幾秒，等按結束才開會來不及）
     private func startHelpers() {
+        // 錄音中每段都叫一下：潤稿程式閒置 60 秒會自己關，錄超過 80 秒時幫手在按結束前就關了，那幾塊只能貼原文
+        if !helpers.isEmpty { ([polisher, tidier].compactMap { $0 } + helpers).forEach { $0.prepare(model: runSettings.model) } }
         guard helpers.isEmpty, runSettings.polish, runSettings.model != "qwen", Date().timeIntervalSince(started) > 20 else { return }
         helpers = (0..<2).map { _ in let p = Polisher(); p.smooth = runSettings.smooth; p.prepare(model: runSettings.model, fresh: true); return p }
+        let t = Polisher(); t.ruleOverride = Polisher.tidyRule; t.prepare(model: runSettings.model, fresh: true); tidier = t
     }
 
     /// 段與段接起來：清單換行、英文之間補空白，其他直接接
@@ -246,7 +346,7 @@ import AVFoundation
         stopMic(); unmute(); ending = false
         log.audio(String(format: "seg%02d.wav", segCount), seg.flush())
         let seconds = Date().timeIntervalSince(started)
-        gen += 1; pieces = []; helpers.forEach { $0.kill() }; helpers = []; state = .idle; log.line("取消")
+        gen += 1; pieces = []; helpers.forEach { $0.kill() }; helpers = []; tidier?.kill(); tidier = nil; state = .idle; log.line("取消")
         // 取消的也留一筆，按錯了可以到歷史紀錄重新辨識救回來
         if seconds >= 2 { store.addHistory(HistoryItem(app: app, raw: "", text: "", seconds: seconds, latency: 0, session: log.name, note: "已取消")) }
         if !quiet { flash("已取消") }
@@ -257,9 +357,8 @@ import AVFoundation
     private func collect() async -> (raw: String, text: String) {
         var raws: [String] = []
         for p in pieces { raws.append(await p.value) }
-        let raw = raws.filter { !$0.isEmpty }.reduce("", Self.join)
-        let fixed = TextFix.dropRetracted(TextFix.applyDict(raw, store.dict))
-        defer { helpers.forEach { $0.kill() }; helpers = [] }
+        let (raw, fixed) = fixed(raws)
+        defer { helpers.forEach { $0.kill() }; helpers = []; tidier?.kill(); tidier = nil }
         guard runSettings.polish, !fixed.isEmpty else { return (raw, TextFix.space(fixed)) }
         // 不到 10 個字跳過潤稿：251 筆紀錄裡這種長度 93% 只改了標點，卻要多等約 1 秒
         // 口述的 email（「a at b 點 tw」）就算很短也要潤稿，才會寫回 a@b.tw
@@ -267,42 +366,54 @@ import AVFoundation
         if !spokenEmail, fixed.filter({ $0.isLetter || $0.isNumber }).count < 10 { log.line("短句，不潤稿"); return (raw, TextFix.question(TextFix.space(fixed))) }
         let parts = runSettings.model == "qwen" ? [fixed] : TextFix.chunks(fixed)
         totalParts = parts.count
-        let workers = [polisher] + helpers
-        // 每個程式照順序處理分到的塊（同一個程式一次只能問一題），不同程式同時跑
-        let done = await withTaskGroup(of: [(Int, String)].self) { g in
-            for (w, p) in workers.enumerated() {
-                let mine = parts.indices.filter { $0 % workers.count == w }
-                guard !mine.isEmpty else { continue }
-                g.addTask { @MainActor in
-                    var r: [(Int, String)] = []
-                    for i in mine { r.append((i, await self.polishPart(parts[i], n: i, of: parts.count, with: p))) }
-                    return r
-                }
-            }
-            return await g.reduce(into: [Int: String]()) { acc, r in for (i, t) in r { acc[i] = t } }
+        let hits = parts.filter { early[$0] != nil }.count
+        if hits > 0 { log.line("邊講邊潤：\(parts.count) 塊裡 \(hits) 塊講話時已經送出") }
+        let tasks = parts.enumerated().map { i, t in
+            let task = early[t] ?? schedule(t, n: i, total: parts.count)
+            early[t] = task   // 最後一段辨識完的 polishEarly 可能晚一步才跑，登記起來才不會同一塊潤兩次
+            return task
         }
-        return (raw, TextFix.space(TextFix.joinParts(parts.indices.map { done[$0] ?? parts[$0] })))
+        var done: [String] = []
+        for (i, t) in tasks.enumerated() {
+            if let good = await t.value { done.append(good) } else { failedParts += 1; done.append(parts[i]) }
+        }
+        let joined = TextFix.joinParts(done)
+        guard parts.count > 1, let t = tidier else { return (raw, TextFix.space(joined)) }
+        return (raw, TextFix.space(await tidy(joined, with: t)))
     }
 
-    /// 潤一塊；沒回應或不可信就用這塊的原文，不拖累其他塊
-    private func polishPart(_ text: String, n: Int, of total: Int, with p: Polisher) async -> String {
+    /// 分塊潤完的長文整段再整理：每塊只看得到 100 字，分段、接縫、跨塊重複、沒潤到的塊要看全文才修得好。
+    /// 不可信（摘要、漏句）就用分塊的結果，最差跟沒有這步一樣。2026-11-12 用 15 筆長文給 Fable 評兩次：贏 23 輸 1。
+    private func tidy(_ text: String, with p: Polisher) async -> String {
+        let t0 = Date(), terms = store.polishTerms(for: text)
+        let msg = (terms.isEmpty ? "" : "<字典>\(Polisher.stripTags(terms))</字典>\n") + "<全文>\(Polisher.stripTags(text))</全文>"
+        let out = await p.raw(msg, model: runSettings.model, timeout: p.timeout(text)).map(Self.tidy)
+        let ok = out.map { TextFix.plausible(text, $0) && !TextFix.metaReply(text, $0) } ?? false
+        log.line(String(format: "全文整理 %.2f 秒｜可信：%@\n    回：%@", Date().timeIntervalSince(t0), out == nil ? "沒回應" : ok ? "是" : "否", out ?? "nil"))
+        return ok ? out! : text
+    }
+
+    /// 模型回來的字：拿掉【游標】和抄回來的標籤（#5）
+    nonisolated static func tidy(_ s: String) -> String {
+        Polisher.stripTags(s.replacingOccurrences(of: "【游標】", with: "")).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 潤一塊；沒回應或不可信回 nil，呼叫的地方用這塊的原文，不拖累其他塊
+    private func polishPart(_ text: String, n: Int, of total: Int, with p: Polisher) async -> String? {
         let t = Date(), m = runSettings.model
         // 前一塊逾時被關掉的幫手，重開要等十幾秒，不如直接用原文
-        if n > 0, m != "qwen", !p.alive { log.line("潤稿 第\(n + 1)/\(total)塊｜程式已關，用原文"); failedParts += 1; return text }
+        if n > 0, m != "qwen", !p.alive { log.line("潤稿 第\(n + 1)塊｜程式已關，用原文"); return nil }
         var out = await (m == "qwen" ? local.polish(text, app: app, context: context, terms: store.polishTerms(for: text))
-                                     : p.polish(text, app: app, context: n == 0 ? context : "", screen: screen, terms: store.polishTerms(for: text), model: m))?
-            .replacingOccurrences(of: "【游標】", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-        var ok = out.map { TextFix.plausible(text, $0) } ?? false
+                                     : p.polish(text, app: app, context: n == 0 ? context : "", screen: screen, terms: store.polishTerms(for: text), model: m)).map(Self.tidy)
+        var ok = out.map { TextFix.plausible(text, $0) && !TextFix.metaReply(text, $0) } ?? false
         // 有回但改太多（摘要、漏句）再問一次，常常第二次就對
-        if out != nil, !ok, m != "qwen", let again = await p.polish(text, app: app, context: "", terms: store.polishTerms(for: text), model: m)?
-            .replacingOccurrences(of: "【游標】", with: "").trimmingCharacters(in: .whitespacesAndNewlines), TextFix.plausible(text, again) {
+        if out != nil, !ok, m != "qwen", let again = await p.polish(text, app: app, context: "", terms: store.polishTerms(for: text), model: m).map(Self.tidy), TextFix.plausible(text, again) {
             log.line("潤稿 第\(n + 1)/\(total)塊 第一次不可信，重問一次可信")
             out = again; ok = true
         }
-        log.line(String(format: "潤稿%@ %.2f 秒｜畫面 \(screen.count) 字｜可信：%@\n    送：%@\n    回：%@", total > 1 ? " 第\(n + 1)/\(total)塊" : "",
+        log.line(String(format: "潤稿%@ %.2f 秒｜畫面 \(screen.count) 字｜可信：%@\n    送：%@\n    回：%@", total > 1 ? " 第\(n + 1)/\(total)塊" : total == 0 ? " 第\(n + 1)塊（邊講邊潤）" : "",
                         Date().timeIntervalSince(t), out == nil ? "沒回應" : ok ? "是" : "否", text, out ?? "nil"))
-        guard ok, let good = out else { failedParts += 1; return text }
-        return good
+        return ok ? out : nil
     }
 
     /// 放開後再收 0.25 秒：最後一個字常常還沒講完就放開了
@@ -340,16 +451,19 @@ import AVFoundation
             // 找不到輸入框時 Cmd+V 可能沒地方貼，結果留在剪貼簿才不會掉
             let noTarget = Learner.focused() == nil
             if !noTarget {
-                Learner.watch(pasted: text, onBlind: { [weak self] in
-                    guard let self else { return }
-                    self.log.line("學字｜讀不到這個輸入框的字（\(app)），要改錯字請到歷史紀錄按「修正」")
-                }) { [weak self] pairs in
+                let learn: ([(String, String)]) -> Void = { [weak self] pairs in
                     guard let self else { return }
                     let added = self.store.learn(pairs)
                     guard !added.isEmpty else { return }
                     self.log.line("學字｜" + added.map { "\($0.wrong)→\($0.right)" }.joined(separator: "、"))
                     self.flash("已加入字典：" + added.map(\.right).joined(separator: "、"))
                 }
+                let mark = SentLog.mark()   // 貼上前記下紀錄檔多長，之後只看新加的
+                Learner.watch(pasted: text, onBlind: { [weak self] in
+                    guard let self else { return }
+                    self.log.line("學字｜讀不到這個輸入框的字（\(app)），改等 Claude Code／Codex 的送出紀錄")
+                    SentLog.watch(pasted: text, from: mark, onPairs: learn)
+                }, onPairs: learn)
             }
             Paster.paste(text, keep: store.settings.keepClipboard || noTarget, enter: store.settings.autoEnter && !noTarget)
             lastText = text
