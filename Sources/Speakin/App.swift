@@ -244,6 +244,9 @@ enum SelfTest {
     static func run() {
         let dict = [DictEntry(term: "Notion", heardAs: ["諾訊"]), DictEntry(term: "LINE")]
         do {
+            var seen: [String] = []
+            for s in ["你 我看一下 , 13 分鐘 ,", "你 我看一下 , 13 分鐘 ,", "你", "我看一下", ",", "梓翔 感謝感謝", "梓翔", "感謝感謝", "你"] { ScreenContext.add(s, to: &seen) }
+            check(seen == ["你 我看一下 , 13 分鐘 ,", "梓翔 感謝感謝", "你"], "讀畫面時重複的字不收，隔很遠的同一個字照收")
             check(Updater.isNewer("0.10", than: "0.9") && !Updater.isNewer("0.2", than: "0.2") && Updater.isNewer("1.0", than: "0.9.9"), "版本號比大小")
             func mode(_ j: String) -> FnMode? { try? JSONDecoder().decode(Settings.self, from: Data(j.utf8)).fnMode }
             check(mode("{\"fnHold\":true}") == .hold && mode("{\"fnHold\":false}") == .tap && mode("{}") == .both, "舊設定的 Fn 習慣照舊，新裝的預設兩種都可以")
