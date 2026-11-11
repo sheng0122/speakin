@@ -327,6 +327,8 @@ enum SelfTest {
               && !ASR.isEcho("要不要打開", prompt: "Notion 要不要打開每日對照")
               && ASR.isEcho("cloudflare、typeless、claude 做的比較好因爲我不會手", prompt: "Cloudflare、Typeless、claude 怎麼樣做的比較好因爲我不會手")
               && !ASR.isEcho("Cloudflare 跟 Typeless 我明天再看", prompt: "Cloudflare、Typeless、claude 怎麼樣做的比較好"), "擋提示照抄")
+        check(TextFix.metaReply("我們先開會", "這是潤稿任務，我只整理逐字稿本身。\n我們先開會") && !TextFix.metaReply("潤稿任務要怎麼分", "潤稿任務要怎麼分？")
+              && Polisher.stripTags("<全文>好</全文>") == "好", "擋模型講自己的工作、清全文標籤")
         check(Polisher.smoothRule != Polisher.rule && Polisher.smoothRule.contains("連接字"), "理順句子模式")
         check(["LINE", "Orca", "Google Chrome", "文字編輯", "1Password", "Visual Studio Code"].map(Zone.of) == ["聊天", "程式", "瀏覽器", "文件", "其他", "程式"], "App 分區")
         check(pairs("用 view js 寫，部署到 cloud floor", "用 Vue.js 寫，部署到 Cloudflare") == ["view js>Vue.js", "cloud floor>Cloudflare"], "一次改兩處")

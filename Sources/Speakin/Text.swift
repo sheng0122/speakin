@@ -184,6 +184,11 @@ enum TextFix {
         return common >= 0.7 * Double(y.count) && Double(x.count) - common <= (fixing ? max(20, 0.6 * Double(x.count)) : max(8, 0.4 * Double(x.count)))
     }
 
+    /// 模型在講自己的工作（「這是潤稿任務，我只整理逐字稿本身。」），不是使用者的話；原文本來就有這些詞不算
+    static func metaReply(_ input: String, _ output: String) -> Bool {
+        ["潤稿任務", "逐字稿本身", "整理逐字稿", "我只整理"].contains { output.contains($0) && !input.contains($0) }
+    }
+
     /// 長文切成幾塊分開潤稿：一次潤太長，Haiku 會刪句、改寫成重點，甚至開始回答內容。
     /// 超過 100 字就切；湊到 50 字後，在「然後、所以、但是」這類轉折詞或句號前切，一塊最多 100 字。
     /// 2026-11-06 用 402 筆紀錄重測：超過 100 字的，整段送只有 6/25 整理好，切成 50～100 字有 23/25。
