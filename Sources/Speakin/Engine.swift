@@ -19,6 +19,7 @@ import AVFoundation
     let store = Store.shared
     let asr = ASR()
     let polisher = Polisher()
+    private var tidier: Polisher?   // 長文分塊潤完，整段再整理一次（分段、接縫、跨塊重複）；跟 helpers 一起開關
     private var helpers: [Polisher] = []   // 錄音超過 20 秒（約 100 字，會分塊）才開，長文分塊同時潤稿，用完就關
     let local = LocalPolisher()
     private let rec = Recorder()
@@ -288,8 +289,11 @@ import AVFoundation
 
     /// 錄音過 20 秒，長文很可能要分塊，先多暖機 2 個 claude（暖機要幾秒，等按結束才開會來不及）
     private func startHelpers() {
+        // 錄音中每段都叫一下：潤稿程式閒置 60 秒會自己關，錄超過 80 秒時幫手在按結束前就關了，那幾塊只能貼原文
+        if !helpers.isEmpty { ([polisher, tidier].compactMap { $0 } + helpers).forEach { $0.prepare(model: runSettings.model) } }
         guard helpers.isEmpty, runSettings.polish, runSettings.model != "qwen", Date().timeIntervalSince(started) > 20 else { return }
         helpers = (0..<2).map { _ in let p = Polisher(); p.smooth = runSettings.smooth; p.prepare(model: runSettings.model, fresh: true); return p }
+        let t = Polisher(); t.ruleOverride = Polisher.tidyRule; t.prepare(model: runSettings.model, fresh: true); tidier = t
     }
 
     /// 段與段接起來：清單換行、英文之間補空白，其他直接接
@@ -306,7 +310,7 @@ import AVFoundation
         stopMic(); unmute(); ending = false
         log.audio(String(format: "seg%02d.wav", segCount), seg.flush())
         let seconds = Date().timeIntervalSince(started)
-        gen += 1; pieces = []; helpers.forEach { $0.kill() }; helpers = []; state = .idle; log.line("取消")
+        gen += 1; pieces = []; helpers.forEach { $0.kill() }; helpers = []; tidier?.kill(); tidier = nil; state = .idle; log.line("取消")
         // 取消的也留一筆，按錯了可以到歷史紀錄重新辨識救回來
         if seconds >= 2 { store.addHistory(HistoryItem(app: app, raw: "", text: "", seconds: seconds, latency: 0, session: log.name, note: "已取消")) }
         if !quiet { flash("已取消") }
@@ -319,7 +323,7 @@ import AVFoundation
         for p in pieces { raws.append(await p.value) }
         let raw = raws.filter { !$0.isEmpty }.reduce("", Self.join)
         let fixed = TextFix.dropRetracted(TextFix.applyDict(raw, store.dict))
-        defer { helpers.forEach { $0.kill() }; helpers = [] }
+        defer { helpers.forEach { $0.kill() }; helpers = []; tidier?.kill(); tidier = nil }
         guard runSettings.polish, !fixed.isEmpty else { return (raw, TextFix.space(fixed)) }
         // 不到 10 個字跳過潤稿：251 筆紀錄裡這種長度 93% 只改了標點，卻要多等約 1 秒
         // 口述的 email（「a at b 點 tw」）就算很短也要潤稿，才會寫回 a@b.tw
@@ -341,7 +345,20 @@ import AVFoundation
             }
             return await g.reduce(into: [Int: String]()) { acc, r in for (i, t) in r { acc[i] = t } }
         }
-        return (raw, TextFix.space(TextFix.joinParts(parts.indices.map { done[$0] ?? parts[$0] })))
+        let joined = TextFix.joinParts(parts.indices.map { done[$0] ?? parts[$0] })
+        guard parts.count > 1, let t = tidier else { return (raw, TextFix.space(joined)) }
+        return (raw, TextFix.space(await tidy(joined, with: t)))
+    }
+
+    /// 分塊潤完的長文整段再整理：每塊只看得到 100 字，分段、接縫、跨塊重複、沒潤到的塊要看全文才修得好。
+    /// 不可信（摘要、漏句）就用分塊的結果，最差跟沒有這步一樣。2026-11-12 用 15 筆長文給 Fable 評兩次：贏 23 輸 1。
+    private func tidy(_ text: String, with p: Polisher) async -> String {
+        let t0 = Date(), terms = store.polishTerms(for: text)
+        let msg = (terms.isEmpty ? "" : "<字典>\(Polisher.stripTags(terms))</字典>\n") + "<全文>\(Polisher.stripTags(text))</全文>"
+        let out = await p.raw(msg, model: runSettings.model, timeout: p.timeout(text)).map(Self.tidy)
+        let ok = out.map { TextFix.plausible(text, $0) && !TextFix.metaReply(text, $0) } ?? false
+        log.line(String(format: "全文整理 %.2f 秒｜可信：%@\n    回：%@", Date().timeIntervalSince(t0), out == nil ? "沒回應" : ok ? "是" : "否", out ?? "nil"))
+        return ok ? out! : text
     }
 
     /// 模型回來的字：拿掉【游標】和抄回來的標籤（#5）
@@ -356,7 +373,7 @@ import AVFoundation
         if n > 0, m != "qwen", !p.alive { log.line("潤稿 第\(n + 1)/\(total)塊｜程式已關，用原文"); failedParts += 1; return text }
         var out = await (m == "qwen" ? local.polish(text, app: app, context: context, terms: store.polishTerms(for: text))
                                      : p.polish(text, app: app, context: n == 0 ? context : "", screen: screen, terms: store.polishTerms(for: text), model: m)).map(Self.tidy)
-        var ok = out.map { TextFix.plausible(text, $0) } ?? false
+        var ok = out.map { TextFix.plausible(text, $0) && !TextFix.metaReply(text, $0) } ?? false
         // 有回但改太多（摘要、漏句）再問一次，常常第二次就對
         if out != nil, !ok, m != "qwen", let again = await p.polish(text, app: app, context: "", terms: store.polishTerms(for: text), model: m).map(Self.tidy), TextFix.plausible(text, again) {
             log.line("潤稿 第\(n + 1)/\(total)塊 第一次不可信，重問一次可信")
