@@ -269,6 +269,50 @@ extension ScreenContext {
 }
 
 /// 學習：貼上後 15 秒再看一次輸入框，使用者改了哪些字就記成「建議加入字典」
+/// Orca 這類終端機裡的 Claude Code／Codex，輸入框讀不到字（xterm 畫在 canvas 上）。
+/// 改等它們把送出的提示寫進紀錄檔，找出貼上的那段，跟 Speakin 貼的比，看使用者改了什麼。
+enum SentLog {
+    static let files = ["/.claude/history.jsonl", "/.codex/history.jsonl"].map { NSHomeDirectory() + $0 }
+
+    static func mark() -> [UInt64] { files.map { (try? FileManager.default.attributesOfItem(atPath: $0)[.size] as? UInt64) ?? 0 } }
+
+    /// 一行紀錄裡送出的文字：Claude Code 把長段貼上折成 [Pasted text #N …]，原文在 pastedContents
+    static func prompt(_ line: Substring) -> String? {
+        guard let d = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
+        if let t = d["text"] as? String { return t }   // Codex
+        guard var t = d["display"] as? String else { return nil }
+        for (k, v) in d["pastedContents"] as? [String: Any] ?? [:] {
+            guard let c = (v as? [String: Any])?["content"] as? String else { continue }
+            t = t.replacingOccurrences(of: #"\[Pasted text #\#(k)[^\]]*\]"#, with: NSRegularExpression.escapedTemplate(for: c), options: .regularExpression)
+        }
+        return t
+    }
+
+    /// 每 2 秒看紀錄檔有沒有新的一行，10 分鐘內找到含這段貼上的提示就結算；一字沒改就什麼都不做
+    static func watch(pasted: String, from start: [UInt64], onPairs: @escaping ([(String, String)]) -> Void) {
+        var offset = start, ticks = 0
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { t in
+            ticks += 1
+            if ticks >= 300 { t.invalidate() }
+            for (i, f) in files.enumerated() {
+                guard let h = FileHandle(forReadingAtPath: f) else { continue }
+                defer { try? h.close() }
+                guard (try? h.seekToEnd()) ?? 0 > offset[i] else { continue }
+                try? h.seek(toOffset: offset[i])
+                let data = h.readDataToEndOfFile(); offset[i] += UInt64(data.count)
+                for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+                    guard let p = prompt(line), let r = TextFix.region(of: pasted, in: p) else { continue }
+                    t.invalidate()
+                    // 終端機裡常是接著打字補內容、整句改寫，不是修聽錯：只收 1～2 個短的替換
+                    let pairs = r == pasted ? [] : TextFix.diffPairs(pasted, r)
+                    if !pairs.isEmpty, pairs.count <= 2, pairs.allSatisfy({ $0.0.count <= 10 && $0.1.count <= 12 }) { onPairs(pairs) }
+                    return
+                }
+            }
+        }
+    }
+}
+
 enum Learner {
     private static var opened = Set<pid_t>()
     static var lastKey = Date.distantPast, lastEnter = Date.distantPast

@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 
     init(_ u: Speakin) {
         self.u = u
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 44),
+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 66),
                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -34,7 +34,22 @@ import UniformTypeIdentifiers
 
 struct PillView: View {
     @ObservedObject var u: Speakin
+    @ObservedObject var store = Store.shared
+    /// 前 20 次錄音在膠囊上方提示怎麼結束、怎麼取消，之後就不顯示
+    private var hint: String? {
+        guard u.state == .recording, store.history.count < 20 else { return nil }
+        let k = store.settings.recordKey.name.replacingOccurrences(of: "右邊的 ", with: "右")
+        return (store.settings.fnMode == .hold ? "放開 " : store.settings.fnMode == .tap ? "再按 " : "") + k + " 完成 · esc 取消"
+    }
     var body: some View {
+        VStack(spacing: 6) {
+            Spacer(minLength: 0)
+            if let hint { Text(hint).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+                .padding(.horizontal, 10).padding(.vertical, 3).background(Capsule().fill(.black.opacity(0.6))) }
+            pill
+        }.frame(width: 480, height: 66)
+    }
+    private var pill: some View {
         HStack(spacing: 10) {
             switch u.state {
             case .recording:
@@ -52,6 +67,7 @@ struct PillView: View {
                 Spinner()
                 Text(u.message ?? "整理中…")
             case .idle:
+                if u.alert { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(brand) }
                 Text(u.message ?? "").lineLimit(1)
             }
         }
@@ -60,7 +76,7 @@ struct PillView: View {
         .padding(.horizontal, 18)
         .frame(height: 40)
         .background(Capsule().fill(.black.opacity(0.95)))
-        .frame(width: 480, height: 44)
+        .frame(height: 44)
     }
 }
 
@@ -466,6 +482,7 @@ struct DictView: View {
     @State private var editHeard = ""
     @State private var hovered: UUID?
     @State private var picked: Set<UUID> = []   // 勾選起來一次刪
+    @State private var removed: [(Int, DictEntry)] = []   // 剛刪掉的，5 秒內可以復原
 
     /// 參考 Typeless：平常只有圖示和詞；滑鼠移上去才出現「⋯」選單和勾選框，勾了就能一次刪很多個
     private func chip(_ e: DictEntry) -> some View {
@@ -479,7 +496,7 @@ struct DictView: View {
             if on {
                 Menu {
                     Button("修改") { edit(e) }
-                    Button("刪除", role: .destructive) { store.dict.removeAll { $0.id == e.id } }
+                    Button("刪除", role: .destructive) { remove([e.id]) }
                 } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("修改和刪除")
                 Toggle("", isOn: Binding(get: { picked.contains(e.id) }, set: { if $0 { picked.insert(e.id) } else { picked.remove(e.id) } }))
@@ -528,7 +545,7 @@ struct DictView: View {
                     Text("已勾選 \(picked.count) 個").foregroundStyle(.secondary)
                     Button("全選") { picked.formUnion(shown.map(\.id)) }
                     Button("取消") { picked = [] }
-                    Button("刪除", role: .destructive) { store.dict.removeAll { picked.contains($0.id) }; picked = [] }
+                    Button("刪除", role: .destructive) { remove(picked); picked = [] }
                         .buttonStyle(.borderedProminent).tint(.red)
                 }
                 if searching {
@@ -546,6 +563,17 @@ struct DictView: View {
             } else { grid(shown) }
         }
         .padding(28)
+        .overlay(alignment: .bottom) {
+            if !removed.isEmpty {
+                HStack(spacing: 12) {
+                    Text("已刪除 \(removed.count) 個")
+                    Button("復原") { undo() }.buttonStyle(.borderless).foregroundStyle(brand)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 8)
+                .background(Capsule().fill(.regularMaterial)).overlay(Capsule().strokeBorder(.quaternary))
+                .padding(.bottom, 20)
+            }
+        }
         .alert(imported ?? "", isPresented: Binding(get: { imported != nil }, set: { if !$0 { imported = nil } })) { Button("好") {} }
         .sheet(item: $editing) { e in
             VStack(alignment: .leading, spacing: 14) {
@@ -555,7 +583,7 @@ struct DictView: View {
                 Text("常被聽成（用頓號分開，辨識出這些字會自動換成正確寫法）").font(.callout)
                 TextField("例：cloud floor、克勞德佛", text: $editHeard).textFieldStyle(.roundedBorder).frame(width: 320)
                 HStack {
-                    Button("刪除這個詞", role: .destructive) { store.dict.removeAll { $0.id == e.id }; editing = nil }
+                    Button("刪除這個詞", role: .destructive) { remove([e.id]); editing = nil }
                     Spacer()
                     Button("取消") { editing = nil }.keyboardShortcut(.cancelAction)
                     Button("儲存") { saveEdit(e) }.keyboardShortcut(.defaultAction)
@@ -574,6 +602,20 @@ struct DictView: View {
                 }
             }.padding(24)
         }
+    }
+
+    private func remove(_ ids: Set<UUID>) {
+        let gone = store.dict.enumerated().filter { ids.contains($0.element.id) }.map { ($0.offset, $0.element) }
+        store.dict.removeAll { ids.contains($0.id) }
+        removed = gone
+        let mine = gone.map(\.1.id)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { if removed.map(\.1.id) == mine { removed = [] } }
+    }
+
+    /// 放回原本的位置；這 5 秒內又加了詞，頂多排序往後一格
+    private func undo() {
+        for (i, e) in removed where !store.dict.contains(where: { $0.id == e.id }) { store.dict.insert(e, at: min(i, store.dict.count)) }
+        removed = []
     }
 
     private func saveEdit(_ e: DictEntry) {
@@ -655,64 +697,76 @@ struct SettingsView: View {
         return nil
     }
 
+    /// 設定的一列：標題＋灰字說明在左，控制項在右、上下置中（Form 內建的會對齊說明第一行，說明一長就偏上）
+    private func row<C: View>(_ title: String, _ note: String, @ViewBuilder _ control: () -> C) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            control()
+        }
+    }
+
     var body: some View {
         Form {
             Section {
-                Toggle(isOn: Binding(
+                row("開機時自動開啟", "電腦開機後自動打開 Speakin。") { Toggle("開機時自動開啟", isOn: Binding(
                     get: { loginOn },
                     set: { on in
                         do { try on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister() } catch { NSLog("開機啟動設定失敗：\(error)") }
                         loginOn = SMAppService.mainApp.status == .enabled
-                    })) { Text("開機時自動開啟"); Text("電腦開機後自動打開 Speakin。") }
-                Picker(selection: $store.settings.recordKey) {
+                    })).labelsHidden().toggleStyle(.switch) }
+                row("錄音鍵", "沒有 Fn 鍵的外接鍵盤，可以改用右邊的 ⌘ 或 ⌥。") { Picker("錄音鍵", selection: $store.settings.recordKey) {
                     ForEach(RecordKey.allCases, id: \.self) { Text($0.name).tag($0) }
-                } label: { Text("錄音鍵"); Text("沒有 Fn 鍵的外接鍵盤，可以改用右邊的 ⌘ 或 ⌥。") }
+                }.labelsHidden().fixedSize() }
                 .onChange(of: store.settings.recordKey) { _, v in Speakin.shared.hotkey.key = v }
-                Picker(selection: $store.settings.fnMode) {
+                row("錄音的按法", "⌥⇧V 可以再貼一次上一句。") { Picker("錄音的按法", selection: $store.settings.fnMode) {
                     Text("按住講放開結束，或點一下免持").tag(FnMode.both)
                     Text("按一下開始，再按一下結束").tag(FnMode.tap)
                     Text("按住講，放開結束").tag(FnMode.hold)
-                } label: { Text("錄音的按法"); Text("⌥⇧V 可以再貼一次上一句。") }
+                }.labelsHidden().fixedSize() }
                 .onChange(of: store.settings.fnMode) { _, v in Speakin.shared.hotkey.mode = v }
-                Toggle(isOn: $store.settings.hideDock) { Text("不在 Dock 顯示"); Text("只留上方選單列的圖示。") }
+                row("不在 Dock 顯示", "只留上方選單列的圖示。") { Toggle("不在 Dock 顯示", isOn: $store.settings.hideDock).labelsHidden().toggleStyle(.switch) }
                     .onChange(of: store.settings.hideDock) { _, v in
                         NSApp.setActivationPolicy(v ? .accessory : .regular)
                         NSApp.activate(ignoringOtherApps: true)   // 切換後視窗會被丟到後面，拉回來
                     }
-                Toggle(isOn: $store.settings.sounds) { Text("提示音"); Text("開始錄音時響一聲。") }
-                Picker(selection: $store.settings.mic) {
+                row("提示音", "開始錄音時響一聲。") { Toggle("提示音", isOn: $store.settings.sounds).labelsHidden().toggleStyle(.switch) }
+                row("麥克風", "講講看，下面的音量條要過那條線才聽得到你。") { Picker("麥克風", selection: $store.settings.mic) {
                     Text("跟系統設定").tag(String?.none)
                     ForEach(SystemAudio.inputs, id: \.uid) { Text($0.name).tag(Optional($0.uid)) }
-                } label: { Text("麥克風"); Text("講講看，下面的音量條要過那條線才聽得到你。") }
+                }.labelsHidden().fixedSize() }
                 .onChange(of: store.settings.mic) { _, _ in Speakin.shared.applyMic() }
                 if let uid = store.settings.mic, SystemAudio.device(uid: uid) == nil {
                     Text("選的麥克風沒接上，先用系統預設的。").font(.caption).foregroundStyle(brand)
                 }
                 MicMeter(mic: store.settings.mic)
-                Toggle(isOn: $store.settings.avoidBluetooth) { Text("用藍牙耳機時改用內建麥克風"); Text("AirPods 當麥克風會切成通話模式，音樂變很糊。只在「跟系統設定」時有用。") }
+                row("用藍牙耳機時改用內建麥克風", "AirPods 當麥克風會切成通話模式，音樂變很糊。只在「跟系統設定」時有用。") { Toggle("用藍牙耳機時改用內建麥克風", isOn: $store.settings.avoidBluetooth).labelsHidden().toggleStyle(.switch) }
                     .onChange(of: store.settings.avoidBluetooth) { _, _ in Speakin.shared.applyMic() }
-                Toggle(isOn: $store.settings.micAlwaysOn) { Text("麥克風常開"); Text("按下錄音鍵前 0.45 秒的聲音也收得到，句首不漏字。代價是右上角橘點一直亮；聲音只留在記憶體，不會存檔。") }
+                row("麥克風常開", "按下錄音鍵前 0.45 秒的聲音也收得到，句首不漏字。代價是右上角橘點一直亮；聲音只留在記憶體，不會存檔。") { Toggle("麥克風常開", isOn: $store.settings.micAlwaysOn).labelsHidden().toggleStyle(.switch) }
                     .onChange(of: store.settings.micAlwaysOn) { _, _ in Speakin.shared.applyMic() }
-                Toggle(isOn: $store.settings.muteOthers) { Text("錄音時把其他聲音靜音"); Text("音樂、影片在錄音時先靜音，講完自動恢復。") }
+                row("錄音時把其他聲音靜音", "音樂、影片在錄音時先靜音，講完自動恢復。") { Toggle("錄音時把其他聲音靜音", isOn: $store.settings.muteOthers).labelsHidden().toggleStyle(.switch) }
             } header: { Label("一般", systemImage: "gearshape") }
             Section {
-                Toggle(isOn: $store.settings.polish) { Text("自動潤稿"); Text("關掉就直接貼辨識結果，文字不會離開電腦。") }
+                row("自動潤稿", "關掉就直接貼辨識結果，文字不會離開電腦。") { Toggle("自動潤稿", isOn: $store.settings.polish).labelsHidden().toggleStyle(.switch) }
                 if store.settings.polish {
-                    Picker(selection: $store.settings.smooth) {
+                    row("潤稿方式", "「保留原話」盡量照你講的；「整理通順」會把句子理順。") { Picker("潤稿方式", selection: $store.settings.smooth) {
                         Text("保留原話").tag(false)
                         Text("整理通順").tag(true)
-                    } label: { Text("潤稿方式"); Text("「保留原話」盡量照你講的；「整理通順」會把句子理順。") }
-                    Picker(selection: $store.settings.model) {
+                    }.labelsHidden().fixedSize() }
+                    row("用什麼潤稿", polishNote ?? "用你電腦上已經登入的 AI 工具。") { Picker("用什麼潤稿", selection: $store.settings.model) {
                         Text("自動").tag("auto")
                         ForEach(Agent.allCases.filter { agents?[$0] != nil }, id: \.self) { a in
                             Text(a.name + (a == .claude ? "（最快）" : "") + (agents?[a] == true ? "" : "（沒登入）")).tag(a == .claude ? "haiku" : a.rawValue)
                         }
                         if store.settings.model == "sonnet" { Text("Claude Code（Sonnet，較慢）").tag("sonnet") }
                         Text("本機（不上網，較慢）").tag("qwen")
-                    } label: { Text("用什麼潤稿"); Text(polishNote ?? "用你電腦上已經登入的 AI 工具。") }
+                    }.labelsHidden().fixedSize() }
                     if store.settings.model == "qwen" { localModel }
-                    Toggle(isOn: $store.settings.context) { Text("參考畫面上的字"); Text("讓辨識和潤稿知道你前面寫了什麼；個資和金鑰會先遮掉。") }
-                    Toggle(isOn: $store.settings.smartSuggest) { Text("智慧建議"); Text("每 7 天用上面選的工具看一次最近講的話，找出常被聽錯的詞，放在字典頁讓你決定要不要加。") }
+                    row("參考畫面上的字", "讓辨識和潤稿知道你前面寫了什麼；個資和金鑰會先遮掉。") { Toggle("參考畫面上的字", isOn: $store.settings.context).labelsHidden().toggleStyle(.switch) }
+                    row("智慧建議", "每 7 天用上面選的工具看一次最近講的話，找出常被聽錯的詞，放在字典頁讓你決定要不要加。") { Toggle("智慧建議", isOn: $store.settings.smartSuggest).labelsHidden().toggleStyle(.switch) }
                 }
             } header: { Label("潤稿", systemImage: "wand.and.stars") }
             .task {
@@ -721,18 +775,18 @@ struct SettingsView: View {
                 Agent.ready = agents
             }
             Section {
-                Toggle(isOn: $store.settings.keepClipboard) { Text("貼上後保留在剪貼簿"); Text("關著時會把你原本複製的東西還原。") }
-                Toggle(isOn: $store.settings.autoEnter) { Text("貼上後自動按 Enter 送出"); Text("聊天、AI 對話框講完就直接送出。寫文件時會多一個換行，用不到就關掉。") }
+                row("貼上後保留在剪貼簿", "關著時會把你原本複製的東西還原。") { Toggle("貼上後保留在剪貼簿", isOn: $store.settings.keepClipboard).labelsHidden().toggleStyle(.switch) }
+                row("貼上後自動按 Enter 送出", "聊天、AI 對話框講完就直接送出。寫文件時會多一個換行，用不到就關掉。") { Toggle("貼上後自動按 Enter 送出", isOn: $store.settings.autoEnter).labelsHidden().toggleStyle(.switch) }
             } header: { Label("貼上", systemImage: "doc.on.clipboard") }
             Section {
-                Picker(selection: $store.settings.historyDays) {
+                row("歷史紀錄和錄音保留", "講的內容常有公司資料，只留需要的天數。改短會馬上刪掉比較舊的，刪了救不回來。設成「不存」之後的錄音也不存；已經存的要到歷史紀錄自己刪。") { Picker("歷史紀錄和錄音保留", selection: $store.settings.historyDays) {
                     Text("一直留").tag(Int?.none)
                     Text("90 天").tag(Int?.some(90))
                     Text("30 天").tag(Int?.some(30))
                     Text("7 天").tag(Int?.some(7))
                     Text("1 天").tag(Int?.some(1))
                     Text("不存").tag(Int?.some(0))
-                } label: { Text("歷史紀錄和錄音保留"); Text("講的內容常有公司資料，只留需要的天數。改短會馬上刪掉比較舊的，刪了救不回來。設成「不存」之後的錄音也不存；已經存的要到歷史紀錄自己刪。") }
+                }.labelsHidden().fixedSize() }
                 .onChange(of: store.settings.historyDays) { _, _ in store.pruneHistory() }
             } header: { Label("紀錄", systemImage: "clock") }
             if asrModels.count > 1 {
@@ -743,9 +797,9 @@ struct SettingsView: View {
                 } header: { Label("語音辨識", systemImage: "waveform") }
             }
             Section {
-                LabeledContent {
+                row("按 Fn 跳出表情符號", "把「按下 🌐 鍵時」改成「不執行任何動作」。Typeless 開著也會搶 Fn 鍵。") {
                     Button("打開鍵盤設定") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!) }
-                } label: { Text("按 Fn 跳出表情符號"); Text("把「按下 🌐 鍵時」改成「不執行任何動作」。Typeless 開著也會搶 Fn 鍵。") }
+                }
             } header: { Label("Fn 鍵沒反應", systemImage: "questionmark.circle") }
             Section {
                 LabeledContent("版本 \(Updater.current)") {
