@@ -10,6 +10,7 @@ import AVFoundation
     @Published var levels = [Float](repeating: 0, count: 14)
     @Published var staged: URL?   // 新版已下載、驗證好，等使用者按重開
     @Published var message: String? { didSet { pill.update() } }
+    @Published var countdown: String?   // 太久沒講話、快要自動停時，膠囊上方倒數
     @Published var alert = false   // message 是錯誤：膠囊加圖示、多留 1 秒
     @Published var hotkeyReady = false
     @Published var lastText = ""   // 上一次貼出去的結果，⌥⇧V 再貼一次；歷史設成不存也記得
@@ -41,12 +42,14 @@ import AVFoundation
     private var screen = ""   // 前景視窗最底下 2000 字，只給雲端潤稿；本機小模型給長文會亂抄
     private var asrError: String?
     private var iMuted = false            // 是 Speakin 把系統靜音的，結束時只還原自己關的
+    private var lastVoice = Date(), spoke = false, loudRun = 0   // 上次聽到講話、講過沒、連續大聲幾格：誤觸沒講話就自己停
     private var silentSamples = 0         // 連續幾乎沒訊號的取樣數，麥克風壞掉或被拔掉時自動停
     private var lastTap = Date.distantPast
     private var lastSamples = Date()      // 上次收到聲音；麥克風開著卻一直沒聲音進來 = 卡住了
     private var stalls = 0                // 這次錄音看門狗重開了幾次都沒救回來
     private var ring: [Float] = []        // 麥克風常開時，按下前最近 0.45 秒的聲音
     private var ending = false            // 放開後多收 0.25 秒尾音中
+    static let noVoiceCancel: Double = 30, quietFinish: Double = 90, warn: Double = 5   // 一開始就沒講話 30 秒取消；講過話之後安靜 90 秒結束（保留講過的）；最後 5 秒倒數，一出聲就重算
     static let maxSeconds: Double = 600   // 單次錄音上限 10 分鐘，最後 1 分鐘膠囊的秒數變橘色
 
     func setup() {
@@ -219,7 +222,7 @@ import AVFoundation
         started = Date()
         message = nil
         play(.start)
-        silentSamples = 0
+        silentSamples = 0; lastVoice = Date(); spoke = false; loudRun = 0; countdown = nil
         state = .recording
         muteOthers()
     }
@@ -241,6 +244,21 @@ import AVFoundation
         silentSamples = level < 0.0003 ? silentSamples + s.count : 0
         let elapsed = Date().timeIntervalSince(started)
         if elapsed > 1, silentSamples > 5 * 16000 { log.line("麥克風 5 秒沒有任何訊號，自動停止"); cancel(); return fail("麥克風沒收到聲音：到設定換一支麥克風") }
+        // 判斷「有在講話」要比切段嚴：切段門檻貼著背景音（怕漏掉小聲的話），拿來判斷會把環境音當成講話；
+        // 還要連續 8 格（0.24 秒）夠大聲才算，敲桌子、點擊這種短雜音不算。
+        // 2026-11-13 實測：安靜時雜音最多連續 4 格，講話連續 23～25 格
+        let th = max(0.012, seg.threshold * 2)
+        var i = 0
+        while i + Segmenter.frame <= s.count {
+            loudRun = Segmenter.rms(s[i..<i + Segmenter.frame]) >= th ? loudRun + 1 : 0
+            if loudRun >= 8 { lastVoice = Date(); spoke = true }
+            i += Segmenter.frame
+        }
+        let left = !spoke ? Self.noVoiceCancel - elapsed : Self.quietFinish - Date().timeIntervalSince(lastVoice)
+        let cd = left <= Self.warn ? "沒聽到聲音，\(max(1, Int(left.rounded(.up)))) 秒後" + (spoke ? "結束" : "取消") : nil
+        if countdown != cd { countdown = cd }
+        if !spoke, elapsed > Self.noVoiceCancel { log.line("\(Int(Self.noVoiceCancel)) 秒沒聽到講話，當成誤觸取消"); cancel(quiet: true); return flash("沒聽到講話，已自動取消") }
+        if Date().timeIntervalSince(lastVoice) > Self.quietFinish { log.line("\(Int(Self.quietFinish)) 秒沒講話，自動結束"); return finish() }
         if elapsed >= Self.maxSeconds { log.line("到 10 分鐘上限，自動結束"); return finish() }
         startHelpers()
         if let piece = seg.push(s) { enqueue(piece) }

@@ -26,7 +26,26 @@ final class Hotkey {
     /// 錄音中才吃掉 Esc；主執行緒寫、按鍵執行緒讀
     var recording: Bool {
         get { lock.withLock { _recording } }
-        set { lock.withLock { _recording = newValue } }
+        set { lock.withLock { _recording = newValue }; escHotkey(newValue) }
+    }
+    /// 安全輸入開著時（密碼欄、1Password，或 loginwindow 鎖屏後沒放掉），一般按鍵進不了攔截，Esc 收不到；
+    /// 系統註冊的快捷鍵照樣會到，所以錄音中另外註冊一個 Esc。攔截收得到時 Esc 已經被吃掉，不會觸發兩次
+    private var escRef: EventHotKeyRef?
+    private var escHandler: EventHandlerRef?
+    private func escHotkey(_ on: Bool) {
+        DispatchQueue.main.async { [self] in
+            if on, escRef == nil {
+                if escHandler == nil {
+                    var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+                    InstallEventHandler(GetApplicationEventTarget(), { _, _, info in
+                        let me = Unmanaged<Hotkey>.fromOpaque(info!).takeUnretainedValue()
+                        Hotkey.note("動作 Esc 取消（系統快捷鍵，安全輸入開著）"); me.onEsc?()
+                        return noErr
+                    }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), &escHandler)
+                }
+                RegisterEventHotKey(UInt32(kVK_Escape), 0, EventHotKeyID(signature: OSType(Self.mark), id: 1), GetApplicationEventTarget(), 0, &escRef)
+            } else if !on, let r = escRef { UnregisterEventHotKey(r); escRef = nil }
+        }
     }
     private var tap: CFMachPort?
     private var fnDown: Date?
@@ -52,24 +71,54 @@ final class Hotkey {
         th.name = "speakin.hotkey"
         th.qualityOfService = .userInteractive
         th.start()
+        Self.note("動作 攔截開始（錄音鍵 \(key)、模式 \(mode)）")
+        // 輸入法被切換時記一筆，對照前後的 Fn 紀錄就知道是哪一下漏出去
+        if Self.logOn {
+            DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String), object: nil, queue: .main) { _ in
+                let id = TISCopyCurrentKeyboardInputSource().flatMap { s in
+                    TISGetInputSourceProperty(s.takeRetainedValue(), kTISPropertyInputSourceID).map { Unmanaged<CFString>.fromOpaque($0).takeUnretainedValue() as String }
+                } ?? "?"
+                Self.note("輸入法切換 → \(id)")
+            }
+        }
         return true
     }
 
-    // 除錯用：Application Support/Speakin/keylog 存在才記錄，只記 Fn、系統鍵，不記一般打字
+    // 除錯紀錄 Application Support/Speakin/keylog.txt：開發版一直記；正式版要 keylog 這個檔存在才記。
+    // 只記 Fn、系統鍵、熱鍵做了什麼、輸入法切換，不記一般打字
     private static let logURL = Store.dir.appendingPathComponent("keylog.txt")
-    private static let logOn = FileManager.default.fileExists(atPath: Store.dir.appendingPathComponent("keylog").path)
+    #if EXPERIMENTAL
+    static let logOn = true
+    #else
+    static let logOn = FileManager.default.fileExists(atPath: Store.dir.appendingPathComponent("keylog").path)
+    #endif
+    private static let logLock = NSLock()
+    private static let clock: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f }()
+    /// 寫一行，前面加時間（跟 logs/ 裡的錄音紀錄對得起來）；超過 2 MB 舊的改名 keylog.old.txt 重來
+    static func note(_ s: String) {
+        guard logOn else { return }
+        logLock.withLock {
+            let fm = FileManager.default, line = "\(clock.string(from: Date())) \(s)\n"
+            if let size = (try? fm.attributesOfItem(atPath: logURL.path))?[.size] as? Int, size > 2_000_000 {
+                let old = Store.dir.appendingPathComponent("keylog.old.txt")
+                try? fm.removeItem(at: old); try? fm.moveItem(at: logURL, to: old)
+            }
+            if let h = try? FileHandle(forWritingTo: logURL) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+            else { try? Data(line.utf8).write(to: logURL) }
+        }
+    }
     fileprivate func debugLog(_ type: CGEventType, _ e: CGEvent, _ start: UInt64, swallowed: Bool) {
         guard Self.logOn else { return }
         let kc = e.getIntegerValueField(.keyboardEventKeycode)
         let isKey = type == .keyDown || type == .keyUp
-        if isKey && kc != 63 && kc != 179 { return }
+        if isKey && ![53, 63, 179].contains(kc) { return }   // Esc 也記，才看得出取消有沒有收到
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         var extra = ""
         if type.rawValue == 14, let ns = NSEvent(cgEvent: e) { extra = " subtype=\(ns.subtype.rawValue) data1=\(String(ns.data1, radix: 16))" }
-        let line = "type=\(type.rawValue) kc=\(kc) flags=\(String(e.flags.rawValue, radix: 16)) 吃掉=\(swallowed) 處理us=\((now - start) / 1000) 事件已存在ms=\(Int64(now) / 1_000_000 - Int64(e.timestamp) / 1_000_000)\(extra)\n"
-        if let h = try? FileHandle(forWritingTo: Self.logURL) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
-        else { try? Data(line.utf8).write(to: Self.logURL) }
+        Self.note("鍵 type=\(type.rawValue) kc=\(kc) flags=\(String(e.flags.rawValue, radix: 16)) 吃掉=\(swallowed) 處理us=\((now - start) / 1000) 事件已存在ms=\(Int64(now) / 1_000_000 - Int64(e.timestamp) / 1_000_000)\(extra)")
     }
+    /// 記下熱鍵決定做什麼，再丟到主執行緒做
+    private func fire(_ what: String, _ f: @escaping () -> Void) { Self.note("動作 " + what); DispatchQueue.main.async(execute: f) }
 
     fileprivate func handle(_ type: CGEventType, _ e: CGEvent) -> Unmanaged<CGEvent>? {
         let t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
@@ -83,6 +132,7 @@ final class Hotkey {
         if e.getIntegerValueField(.eventSourceUserData) == Self.mark { return pass }
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            Self.note("動作 攔截被系統停用（\(type == .tapDisabledByTimeout ? "處理太久" : "使用者輸入")），重新開")
             if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
             // 停用期間可能漏收放開：鍵其實已經放開了，就當成剛放開，不然按住模式會一直錄
             if fnDown != nil, !key.isDown(CGEventSource.flagsState(.hidSystemState)) { release() }
@@ -95,13 +145,13 @@ final class Hotkey {
             let kc = e.getIntegerValueField(.keyboardEventKeycode), enter = [36, 76].contains(kc), now = Date()
             DispatchQueue.main.async { Learner.lastKey = now; if enter { Learner.lastEnter = now } }
             if kc == 53, recording || escDown {
-                if !escDown { DispatchQueue.main.async { self.onEsc?() } }
+                if !escDown { fire("Esc 取消") { self.onEsc?() } }
                 escDown = true
                 return nil
             }
             let mods = e.flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
             if kc == 9, mods == [.maskAlternate, .maskShift] {   // ⌥⇧V
-                DispatchQueue.main.async { self.onPasteLast?() }
+                fire("⌥⇧V 再貼一次") { self.onPasteLast?() }
                 return nil
             }
         case .keyUp where e.getIntegerValueField(.keyboardEventKeycode) == 9 && e.flags.contains([.maskAlternate, .maskShift]):
@@ -114,7 +164,8 @@ final class Hotkey {
             let m = mode
             if down {
                 fnDown = Date(); otherKey = false; stopPress = recording
-                if m != .tap, !stopPress { DispatchQueue.main.async { self.onHold?(.down) } }
+                if m != .tap, !stopPress { fire("按下 → 開始錄（模式 \(m)）") { self.onHold?(.down) } }
+                else { Self.note("動作 按下（模式 \(m)，\(stopPress ? "這下是結束" : "等放開")）") }
             } else { release() }
             return k == .fn ? nil : pass   // 吃掉 Fn 的按下和放開；右邊的修飾鍵放行，⌘C 這種組合才不會壞
         default: break
@@ -127,19 +178,20 @@ final class Hotkey {
         guard let d = fnDown else { return }
         let m = mode
         fnDown = nil
-        let short = Date().timeIntervalSince(d) < 0.3
+        let held = Date().timeIntervalSince(d), short = held < 0.3
+        let why = "按了 \(Int(held * 1000))ms\(otherKey ? "、中間按了別的鍵" : "")"
         switch m {
         case .tap:
-            if !otherKey, Date().timeIntervalSince(d) < 0.5 { DispatchQueue.main.async { self.onTap?() } }
+            if !otherKey, held < 0.5 { fire("放開 → 切換錄音（\(why)）") { self.onTap?() } } else { Self.note("動作 放開 → 不算（\(why)）") }
         case .hold:
             // ponytail: Fn＋其他鍵（例如 Fn＋Delete）也會先開始錄音，放開時才取消；要更乾淨就延遲 0.3 秒才開始
             let ev: HoldEvent = !otherKey && !short ? .up : .abort
-            DispatchQueue.main.async { self.onHold?(ev) }
+            fire("放開 → \(ev == .up ? "結束錄音" : "取消")（\(why)）") { self.onHold?(ev) }
         case .both:
-            if stopPress { if !otherKey { DispatchQueue.main.async { self.onTap?() } } }
-            else if otherKey { DispatchQueue.main.async { self.onHold?(.abort) } }
-            else if !short { DispatchQueue.main.async { self.onHold?(.up) } }
-            // 短按：繼續錄（免持），再點一下 Fn 結束
+            if stopPress { if !otherKey { fire("放開 → 結束錄音（\(why)）") { self.onTap?() } } else { Self.note("動作 放開 → 不算（\(why)）") } }
+            else if otherKey { fire("放開 → 取消（\(why)）") { self.onHold?(.abort) } }
+            else if !short { fire("放開 → 結束錄音（\(why)）") { self.onHold?(.up) } }
+            else { Self.note("動作 放開 → 短按，繼續錄（免持）（\(why)）") }
         }
     }
 }

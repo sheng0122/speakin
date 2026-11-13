@@ -44,7 +44,7 @@ struct PillView: View {
     var body: some View {
         VStack(spacing: 6) {
             Spacer(minLength: 0)
-            if let hint { Text(hint).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+            if let hint = u.state == .recording ? u.countdown ?? hint : nil { Text(hint).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.85))
                 .padding(.horizontal, 10).padding(.vertical, 3).background(Capsule().fill(.black.opacity(0.6))) }
             pill
         }.frame(width: 480, height: 66)
